@@ -463,5 +463,152 @@ classdef UnitsTabController < handle
                 delete(d);
             end
         end
+
+        function dialogStoichiometricReactor(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            ns = numel(obj.State.speciesNames);
+            [d, ctrls] = obj.Services.makeDialog('Stoichiometric Reactor', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species in order (negative = consumed, positive = produced).'}, ...
+                 {'Extent mode:','text','fixed','"fixed" to specify extent directly, or "solve" to let the solver find it.'}, ...
+                 {'Reaction extent:','numeric',0,'Molar extent of reaction (used when mode is "fixed").'}, ...
+                 {'Reference species index:','numeric',1,'Species index for sign convention.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value = char(string(u.inlet.name));
+                ctrls{2}.Value = char(string(u.outlet.name));
+                ctrls{3}.Value = num2str(u.nu.');
+                ctrls{4}.Value = u.extentMode;
+                ctrls{5}.Value = u.extent;
+                ctrls{6}.Value = u.referenceSpecies;
+            elseif numel(sNames) >= 2
+                ctrls{2}.Value = sNames{2};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                nu = str2num(ctrls{3}.Value); %#ok<ST2NM>
+                if numel(nu) ~= ns
+                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error');
+                    return;
+                end
+                def.type='StoichiometricReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                def.nu=nu; def.extentMode=strtrim(lower(ctrls{4}.Value));
+                def.extent=ctrls{5}.Value; def.referenceSpecies=ctrls{6}.Value;
+                u=proc.units.StoichiometricReactor(obj.Services.findStream(def.inlet), obj.Services.findStream(def.outlet), def.nu, ...
+                    'extent', def.extent, 'extentMode', def.extentMode, 'referenceSpecies', def.referenceSpecies);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogConversionReactor(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            ns = numel(obj.State.speciesNames);
+            [d, ctrls] = obj.Services.makeDialog('Conversion Reactor', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
+                 {'Key species index:','numeric',1,'Conversion is defined relative to this species.'}, ...
+                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
+                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the key species that reacts.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value = char(string(u.inlet.name));
+                ctrls{2}.Value = char(string(u.outlet.name));
+                ctrls{3}.Value = num2str(u.nu.');
+                ctrls{4}.Value = u.keySpecies;
+                ctrls{5}.Value = u.conversionMode;
+                ctrls{6}.Value = u.conversion;
+            elseif numel(sNames) >= 2
+                ctrls{2}.Value = sNames{2};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                nu = str2num(ctrls{3}.Value); %#ok<ST2NM>
+                if numel(nu) ~= ns
+                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error');
+                    return;
+                end
+                def.type='ConversionReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                def.nu=nu; def.keySpecies=ctrls{4}.Value;
+                def.conversionMode=strtrim(lower(ctrls{5}.Value)); def.conversion=ctrls{6}.Value;
+                u=proc.units.ConversionReactor(obj.Services.findStream(def.inlet), obj.Services.findStream(def.outlet), def.nu, ...
+                    def.keySpecies, def.conversion, 'conversionMode', def.conversionMode);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogYieldReactor(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            [d, ctrls] = obj.Services.makeDialog('Yield Reactor', 640, 300, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
+                 {'Basis species index:','numeric',1,'Species consumed; conversion and yields are defined relative to this.'}, ...
+                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
+                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the basis species that reacts.'}, ...
+                 {'Product species indices:','text','2','Indices of species produced (space-separated, e.g. "2 3").'}, ...
+                 {'Product yields:','text','1','Moles of each product per mole of basis species reacted.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                ctrls{3}.Value=u.basisSpecies;
+                ctrls{4}.Value=u.conversionMode;
+                ctrls{5}.Value=u.conversion;
+                ctrls{6}.Value=num2str(u.productSpecies(:).');
+                ctrls{7}.Value=num2str(u.productYields(:).');
+            elseif numel(sNames)>=2
+                ctrls{2}.Value=sNames{2};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                pIdx = str2num(ctrls{6}.Value); %#ok<ST2NM>
+                pY = str2num(ctrls{7}.Value); %#ok<ST2NM>
+                if numel(pIdx) ~= numel(pY)
+                    uialert(d,'Product indices and yields must have same length.','Error'); return;
+                end
+                def.type='YieldReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                def.basisSpecies=ctrls{3}.Value;
+                def.conversionMode=strtrim(lower(ctrls{4}.Value)); def.conversion=ctrls{5}.Value;
+                def.productSpecies=pIdx; def.productYields=pY;
+                u=proc.units.YieldReactor(obj.Services.findStream(def.inlet), obj.Services.findStream(def.outlet), ...
+                    def.basisSpecies, def.conversion, def.productSpecies, def.productYields, ...
+                    'conversionMode', def.conversionMode);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogEquilibriumReactor(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            ns = numel(obj.State.speciesNames);
+            [d, ctrls] = obj.Services.makeDialog('Equilibrium Reactor', 620, 260, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
+                 {'Equilibrium constant (Keq):','numeric',1,'Equilibrium constant for the reaction.'}, ...
+                 {'Reference species index:','numeric',1,'Species index for equilibrium calculation.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                ctrls{3}.Value=num2str(u.nu.');
+                ctrls{4}.Value=u.Keq;
+                ctrls{5}.Value=u.referenceSpecies;
+            elseif numel(sNames)>=2
+                ctrls{2}.Value=sNames{2};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                nu = str2num(ctrls{3}.Value); %#ok<ST2NM>
+                if numel(nu) ~= ns
+                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error'); return;
+                end
+                def.type='EquilibriumReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                def.nu=nu; def.Keq=ctrls{4}.Value; def.referenceSpecies=ctrls{5}.Value;
+                u=proc.units.EquilibriumReactor(obj.Services.findStream(def.inlet), obj.Services.findStream(def.outlet), ...
+                    def.nu, def.Keq, 'referenceSpecies', def.referenceSpecies);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
     end
 end
