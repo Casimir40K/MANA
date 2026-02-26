@@ -51,9 +51,42 @@ classdef SpeciesTabController < handle
         end
 
         function applySpecies(obj)
-            if isfield(obj.Services, 'applySpeciesReset')
-                obj.Services.applySpeciesReset();
+            if isempty(obj.State.speciesNames)
+                obj.Services.alertError('Species list cannot be empty.');
+                return;
             end
+
+            obj.State.streams = {};
+            obj.State.units = {};
+            obj.State.unitDefs = {};
+            obj.State.lastSolver = [];
+
+            obj.Services.addStreamInternal('Feed');
+            s = obj.State.streams{1};
+            s.n_dot = 10;
+            s.T = 300;
+            s.P = 1e5;
+            ns = numel(obj.State.speciesNames);
+            y0 = zeros(1, ns);
+            y0(1) = 1;
+            s.y = y0;
+            s.known.n_dot = true;
+            s.known.T = true;
+            s.known.P = true;
+            s.known.y(:) = true;
+
+            obj.Services.refreshStreamTables();
+            obj.Services.refreshUnitsListBox();
+            obj.Services.refreshFlowsheetDiagram();
+            obj.Services.updateDOF();
+            obj.Services.refreshUnitTablePopup();
+            obj.Services.refreshStreamTablePopup();
+            obj.Services.refreshResultsTablesTab();
+            obj.Services.updateSensDropdowns();
+            obj.Services.refreshSpeciesPropsTable();
+            obj.Services.setNextStreamName('S2');
+            obj.Services.setStatus(sprintf('Species set: {%s}. Feed created.', ...
+                strjoin(obj.State.speciesNames, ', ')));
         end
     end
 end

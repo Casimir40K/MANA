@@ -227,12 +227,30 @@ classdef MathLabApp < handle
         function initControllers(app)
             app.syncModelToState();
             app.SpeciesController = ui.tabs.SpeciesTabController(app.AppState, struct( ...
-                'applySpeciesReset', @() app.applySpeciesCore()));
+                'alertError', @(msg) uialert(app.Fig, msg, 'Error'), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'refreshUnitsListBox', @() app.refreshUnitsListBox(), ...
+                'refreshFlowsheetDiagram', @() app.refreshFlowsheetDiagram(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'refreshUnitTablePopup', @() app.refreshUnitTablePopup(), ...
+                'refreshStreamTablePopup', @() app.refreshStreamTablePopup(), ...
+                'refreshResultsTablesTab', @() app.refreshResultsTablesTab(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'refreshSpeciesPropsTable', @() app.refreshSpeciesPropsTable(), ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'setStatus', @(msg) app.setStatus(msg)));
             app.StreamsController = ui.tabs.StreamsTabController(app.AppState, struct( ...
-                'onStreamValEdit', @(src,evt) app.onStreamValEditCore(src,evt), ...
-                'onKnownEdit', @(src,evt) app.onKnownEditCore(src,evt), ...
-                'addStreamFromUI', @() app.addStreamFromUICore(), ...
-                'removeSelectedStream', @() app.removeSelectedStreamCore()));
+                'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
+                'alertWithTitle', @(msg,titleTxt) uialert(app.Fig,msg,titleTxt), ...
+                'getNewStreamName', @() app.StreamNameField.Value, ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'getSelectedStreamRow', @() app.getSelectedStreamRow(), ...
+                'toSI', @(val,quantity) app.toSI(val,quantity)));
             app.UnitsController = ui.tabs.UnitsTabController(app.AppState, struct( ...
                 'dialogReactor', @(sNames,editIdx) app.dialogReactorCore(sNames,editIdx), ...
                 'dialogAdjust', @(sNames,editIdx) app.dialogAdjustCore(sNames,editIdx)));
@@ -925,43 +943,9 @@ classdef MathLabApp < handle
         end
 
         function applySpecies(app)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.SpeciesController.applySpecies();
             app.syncStateToModel();
-        end
-
-        function applySpeciesCore(app)
-            if isempty(app.speciesNames)
-                uialert(app.Fig, 'Species list cannot be empty.', 'Error'); return;
-            end
-            app.streams = {};
-            app.units = {};
-            app.unitDefs = {};
-            app.lastSolver = [];
-
-            % Default feed stream
-            app.addStreamInternal('Feed');
-            s = app.streams{1};
-            s.n_dot = 10; s.T = 300; s.P = 1e5;
-            ns = numel(app.speciesNames);
-            y0 = zeros(1,ns); y0(1) = 1;
-            s.y = y0;
-            s.known.n_dot = true; s.known.T = true; s.known.P = true;
-            s.known.y(:) = true;
-
-            app.refreshStreamTables();
-            app.refreshUnitsListBox();
-            app.refreshFlowsheetDiagram();
-            app.updateDOF();
-            app.refreshUnitTablePopup();
-            app.refreshStreamTablePopup();
-            app.refreshResultsTablesTab();
-            app.updateSensDropdowns();
-            app.refreshSpeciesPropsTable();
-            app.StreamNameField.Value = 'S2';
-            app.setStatus(sprintf('Species set: {%s}. Feed created.', ...
-                strjoin(app.speciesNames,', ')));
         end
 
         function refreshSpeciesPropsTable(app)
@@ -1013,51 +997,29 @@ classdef MathLabApp < handle
             app.streams{end+1} = s;
         end
 
+        function setNextStreamName(app, name)
+            app.StreamNameField.Value = char(string(name));
+        end
+
+        function row = getSelectedStreamRow(app)
+            sel = app.StreamValTable.Selection;
+            if isempty(sel)
+                row = [];
+                return;
+            end
+            row = sel(1);
+        end
+
         function addStreamFromUI(app)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.StreamsController.addStreamFromUI();
             app.syncStateToModel();
         end
 
-        function addStreamFromUICore(app)
-            name = strtrim(app.StreamNameField.Value);
-            if isempty(name)
-                uialert(app.Fig,'Enter a name.','Error'); return;
-            end
-            for i = 1:numel(app.streams)
-                if strcmp(string(app.streams{i}.name), name)
-                    uialert(app.Fig,sprintf('"%s" exists.',name),'Duplicate'); return;
-                end
-            end
-            app.addStreamInternal(name);
-            app.refreshStreamTables();
-            app.updateDOF();
-            app.updateSensDropdowns();
-            % Auto-increment
-            tok = regexp(name, '^([A-Za-z_]*)(\d+)$','tokens');
-            if ~isempty(tok)
-                app.StreamNameField.Value = sprintf('%s%d',tok{1}{1},str2double(tok{1}{2})+1);
-            end
-        end
-
         function removeSelectedStream(app)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.StreamsController.removeSelectedStream();
             app.syncStateToModel();
-        end
-
-        function removeSelectedStreamCore(app)
-            sel = app.StreamValTable.Selection;
-            if isempty(sel), return; end
-            row = sel(1);
-            if row >= 1 && row <= numel(app.streams)
-                app.streams(row) = [];
-                app.refreshStreamTables();
-                app.updateDOF();
-                app.updateSensDropdowns();
-            end
         end
 
         function refreshStreamTables(app)
@@ -1104,47 +1066,15 @@ classdef MathLabApp < handle
         end
 
         function onStreamValEdit(app, src, evt)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.StreamsController.onStreamValEdit(src, evt);
             app.syncStateToModel();
         end
 
-        function onStreamValEditCore(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            ns = numel(app.speciesNames);
-            switch col
-                case 2, s.n_dot = app.toSI(evt.NewData,'flow');
-                case 3, s.T = app.toSI(evt.NewData,'temperature');
-                case 4, s.P = app.toSI(evt.NewData,'pressure');
-                otherwise
-                    j = col - 4;
-                    if j >= 1 && j <= ns, s.y(j) = evt.NewData; end
-            end
-            app.refreshStreamTables();
-        end
-
         function onKnownEdit(app, src, evt)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.StreamsController.onKnownEdit(src, evt);
             app.syncStateToModel();
-        end
-
-        function onKnownEditCore(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            val = logical(evt.NewData);
-            switch col
-                case 2, s.known.n_dot = val;
-                case 3, s.known.T = val;
-                case 4, s.known.P = val;
-                case 5, s.known.y(:) = val;
-            end
-            app.updateDOF();
         end
 
         function syncStreamsFromTable(app)
