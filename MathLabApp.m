@@ -260,9 +260,23 @@ classdef MathLabApp < handle
                 'runSolve', @() app.runSolverCore()));
             app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct());
             app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
-                'runSensitivity', @() app.runSensitivityCore(), ...
-                'applySensParam', @(paramChoice,val) app.applySensParamCore(paramChoice,val), ...
-                'extractOutput', @(streamName,fieldStr) app.extractOutputCore(streamName,fieldStr)));
+                'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
+                'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
+                'getSensParamChoice', @() app.SensParamDropDown.Value, ...
+                'getSensMin', @() app.SensMinField.Value, ...
+                'getSensMax', @() app.SensMaxField.Value, ...
+                'getSensNpts', @() app.SensNptsField.Value, ...
+                'getSensOutputStream', @() app.SensOutputStreamDD.Value, ...
+                'getSensOutputField', @() app.SensOutputFieldDD.Value, ...
+                'getSensMaxIter', @() app.SensMaxIterField.Value, ...
+                'getSensTol', @() app.SensTolField.Value, ...
+                'clearSensitivityAxes', @() cla(app.SensAxes), ...
+                'setSensitivityStatus', @(txt) app.setSensitivityStatusText(txt), ...
+                'setSensitivityRunEnabled', @(tf) app.setSensitivityRunEnabled(tf), ...
+                'buildFlowsheet', @() app.buildFlowsheet(), ...
+                'findStream', @(name) app.findStream(name), ...
+                'setStatus', @(msg) app.setStatus(msg), ...
+                'plotSensitivity', @(vals,results,paramLabel,outStreamName,outFieldStr) app.plotSensitivityResults(vals,results,paramLabel,outStreamName,outFieldStr)));
         end
 
         function syncModelToState(app)
@@ -1001,6 +1015,27 @@ classdef MathLabApp < handle
 
         function setNextStreamName(app, name)
             app.StreamNameField.Value = char(string(name));
+        end
+
+        function setSensitivityStatusText(app, txt)
+            app.SensStatusLabel.Text = txt;
+        end
+
+        function setSensitivityRunEnabled(app, tf)
+            if tf
+                app.SensRunBtn.Enable = 'on';
+            else
+                app.SensRunBtn.Enable = 'off';
+            end
+        end
+
+        function plotSensitivityResults(app, vals, results, paramLabel, outStreamName, outFieldStr)
+            plot(app.SensAxes, vals, results, '-o', 'LineWidth',1.5, ...
+                'MarkerSize',5, 'Color',[0.2 0.5 0.8]);
+            xlabel(app.SensAxes, paramLabel);
+            ylabel(app.SensAxes, sprintf('%s . %s', outStreamName, strrep(outFieldStr,'_','\_')));
+            title(app.SensAxes, 'Sensitivity Analysis');
+            grid(app.SensAxes, 'on');
         end
 
         function row = getSelectedStreamRow(app)
@@ -5099,183 +5134,69 @@ classdef MathLabApp < handle
         end
 
         function runSensitivity(app)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             app.SensitivityController.onRunSensitivity();
             app.syncStateToModel();
         end
 
-        function runSensitivityCore(app)
-            app.syncStreamsFromTable();
-            if isempty(app.streams) || isempty(app.units)
-                uialert(app.Fig,'Add streams and units first.','Error'); return;
-            end
-
-            paramChoice = app.SensParamDropDown.Value;
-            vMin = app.SensMinField.Value;
-            vMax = app.SensMaxField.Value;
-            nPts = round(app.SensNptsField.Value);
-            outStreamName = app.SensOutputStreamDD.Value;
-            outFieldStr   = app.SensOutputFieldDD.Value;
-            sensMaxIt = app.SensMaxIterField.Value;
-            sensTol   = app.SensTolField.Value;
-
-            vals = linspace(vMin, vMax, nPts);
-            results = nan(1, nPts);
-
-            origVal = app.getSensParamValue(paramChoice);
-
-            cla(app.SensAxes);
-            app.setStatus('Running sensitivity...');
-            app.SensStatusLabel.Text = sprintf('Running 0/%d ...', nPts);
-            app.SensRunBtn.Enable = 'off';
-            drawnow;
-
-            for p = 1:nPts
-                try
-                    app.applySensParam(paramChoice, vals(p));
-                    fs = app.buildFlowsheet();
-                    fs.solve('maxIter',sensMaxIt,'tolAbs',sensTol,'autoScale',true,'printToConsole',false);
-                    results(p) = app.extractOutput(outStreamName, outFieldStr);
-                catch
-                    results(p) = NaN;
-                end
-                app.SensStatusLabel.Text = sprintf('Running %d/%d ...', p, nPts);
-                drawnow limitrate;
-            end
-
-            if ~isnan(origVal)
-                app.applySensParam(paramChoice, origVal);
-            end
-
-            app.SensRunBtn.Enable = 'on';
-
-            % Clean label for axes
-            paramLabel = strrep(paramChoice, '_', '\_');
-            plot(app.SensAxes, vals, results, '-o', 'LineWidth',1.5, ...
-                'MarkerSize',5, 'Color',[0.2 0.5 0.8]);
-            xlabel(app.SensAxes, paramLabel);
-            ylabel(app.SensAxes, sprintf('%s . %s', outStreamName, strrep(outFieldStr,'_','\_')));
-            title(app.SensAxes, 'Sensitivity Analysis');
-            grid(app.SensAxes, 'on');
-            nConv = sum(~isnan(results));
-            statusMsg = sprintf('Sensitivity: %d/%d converged (maxIter=%d, tol=%.1e).', ...
-                nConv, nPts, sensMaxIt, sensTol);
-            app.SensStatusLabel.Text = statusMsg;
-            app.setStatus(statusMsg);
-        end
-
-        function [unitIdx, fieldName, vecIdx, streamName] = parseSensParam(~, paramChoice)
-            % Parse a sweep parameter string into its components.
-            % Format: "Unit [i] TypeName . field" or "Unit [i] TypeName . field(j)"
-            %     or: "Stream streamName . field" or "Stream streamName . y(j) [species]"
-            unitIdx = []; fieldName = ''; vecIdx = []; streamName = '';
-
-            % Try unit pattern: "Unit [i] ... . fieldName" or "Unit [i] ... . fieldName(j)"
-            tok = regexp(paramChoice, '^Unit \[(\d+)\].*\.\s*(\w+)(?:\((\d+)\))?', 'tokens');
-            if ~isempty(tok)
-                unitIdx = str2double(tok{1}{1});
-                fieldName = tok{1}{2};
-                if numel(tok{1}) >= 3 && ~isempty(tok{1}{3})
-                    vecIdx = str2double(tok{1}{3});
-                end
+        function applySensParam(app, paramChoice, varargin)
+            if numel(varargin) == 1
+                val = varargin{1};
+                app.syncModelToState();
+                app.SensitivityController.applySensParam(paramChoice, val);
+                app.syncStateToModel();
                 return;
             end
 
-            % Try stream pattern: "Stream name . y(j) [species]" or "Stream name . field"
-            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*y\((\d+)\)', 'tokens');
-            if ~isempty(tok)
-                streamName = tok{1}{1};
-                fieldName = 'y';
-                vecIdx = str2double(tok{1}{2});
+            unitIdx = varargin{1};
+            val = varargin{2};
+            if isempty(unitIdx) || unitIdx < 1 || unitIdx > numel(app.units)
                 return;
             end
-            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*(\w+)', 'tokens');
-            if ~isempty(tok)
-                streamName = tok{1}{1};
-                fieldName = tok{1}{2};
-                return;
-            end
-        end
-
-        function applySensParam(app, paramChoice, val)
-            % Temporary wrapper during controller migration.
-            app.syncModelToState();
-            app.SensitivityController.applySensParam(paramChoice, val);
-            app.syncStateToModel();
-        end
-
-        function applySensParamCore(app, paramChoice, val)
-            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
-            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
-                u = app.units{unitIdx};
-                if ~isempty(vecIdx) && isprop(u, fieldName)
-                    v = u.(fieldName);
-                    v(vecIdx) = val;
-                    u.(fieldName) = v;
-                elseif isprop(u, fieldName)
-                    u.(fieldName) = val;
-                end
-            elseif ~isempty(streamName) && ~isempty(fieldName)
-                s = app.findStream(streamName);
-                if ~isempty(s)
-                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
-                        v = s.y;
-                        v(vecIdx) = val;
-                        s.y = v;
-                    elseif isprop(s, fieldName)
-                        s.(fieldName) = val;
-                    end
+            u = app.units{unitIdx};
+            if contains(paramChoice, 'conversion') && isprop(u, 'conversion')
+                u.conversion = val;
+            elseif contains(paramChoice, 'beta') && isprop(u, 'beta')
+                u.beta = val;
+            elseif contains(paramChoice, 'phi') && isprop(u, 'phi')
+                phi = u.phi;
+                if ~isempty(phi)
+                    phi(:) = val;
+                    u.phi = phi;
                 end
             end
         end
 
-        function val = getSensParamValue(app, paramChoice)
+        function val = getSensParamValue(app, paramChoice, varargin)
+            if isempty(varargin)
+                app.syncModelToState();
+                val = app.SensitivityController.getSensParamValueForApp(paramChoice);
+                app.syncStateToModel();
+                return;
+            end
+
+            unitIdx = varargin{1};
             val = NaN;
-            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
-            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
-                u = app.units{unitIdx};
-                if isprop(u, fieldName)
-                    try
-                        raw = u.(fieldName);
-                        if ~isempty(vecIdx)
-                            val = raw(vecIdx);
-                        else
-                            val = raw;
-                        end
-                    catch
-                    end
-                end
-            elseif ~isempty(streamName) && ~isempty(fieldName)
-                s = app.findStream(streamName);
-                if ~isempty(s)
-                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
-                        val = s.y(vecIdx);
-                    elseif isprop(s, fieldName)
-                        val = s.(fieldName);
-                    end
+            if isempty(unitIdx) || unitIdx < 1 || unitIdx > numel(app.units)
+                return;
+            end
+            u = app.units{unitIdx};
+            if contains(paramChoice, 'conversion') && isprop(u, 'conversion')
+                val = u.conversion;
+            elseif contains(paramChoice, 'beta') && isprop(u, 'beta')
+                val = u.beta;
+            elseif contains(paramChoice, 'phi') && isprop(u, 'phi')
+                phi = u.phi;
+                if ~isempty(phi)
+                    val = phi(1);
                 end
             end
         end
 
         function val = extractOutput(app, streamName, fieldStr)
-            % Temporary wrapper during controller migration.
             app.syncModelToState();
             val = app.SensitivityController.extractOutput(streamName, fieldStr);
             app.syncStateToModel();
-        end
-
-        function val = extractOutputCore(app, streamName, fieldStr)
-            s = app.findStream(streamName);
-            if isempty(s), val=NaN; return; end
-            if strcmp(fieldStr,'n_dot'), val=s.n_dot;
-            elseif strcmp(fieldStr,'T'), val=s.T;
-            elseif strcmp(fieldStr,'P'), val=s.P;
-            else
-                tok = regexp(fieldStr,'y\((\d+)\)','tokens');
-                if ~isempty(tok), val=s.y(str2double(tok{1}{1}));
-                else, val=NaN; end
-            end
         end
     end
 
