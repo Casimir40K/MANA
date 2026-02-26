@@ -1561,50 +1561,15 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function dialogLink(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Stream Link', 440, 170, ...
-                {{'Inlet:','dropdown',sNames,'Stream entering the link (state is copied to outlet).'}, ...
-                 {'Outlet:','dropdown',sNames,'Stream receiving the copied state.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Link'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                u=proc.units.Link(app.findStream(def.inlet),app.findStream(def.outlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogLink(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogMixer(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Mixer', 520, 180, ...
-                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '), ...
-                  'Streams to combine (e.g. "S1, S2").'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Combined outlet stream.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
-                ctrls{1}.Value=strjoin(inN,', ');
-                ctrls{2}.Value=char(string(u.outlet.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                inNms=strtrim(strsplit(ctrls{1}.Value,','));
-                inS={};
-                for k=1:numel(inNms)
-                    s=app.findStream(inNms{k});
-                    if isempty(s)
-                        uialert(d,sprintf('"%s" not found.',inNms{k}),'Error'); return;
-                    end
-                    inS{end+1}=s; %#ok
-                end
-                def.type='Mixer'; def.inlets=inNms; def.outlet=ctrls{2}.Value;
-                u=proc.units.Mixer(inS,app.findStream(def.outlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogMixer(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogReactor(app, sNames, editIdx)
@@ -4185,49 +4150,9 @@ classdef MathLabApp < handle
 
 
         function dialogSplitter(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Flow Splitter', 620, 250, ...
-                {{'Feed stream:','dropdown',sNames,'Stream to split into multiple outlets.'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet stream names (e.g. "S2, S3").'}, ...
-                 {'Spec mode:','text','fractions','"fractions" to specify split fractions, or "flows" to specify outlet flowrates.'}, ...
-                 {'Values:','text','0.5 0.5','One value per outlet stream, in the same order.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                outN=cellfun(@(s)char(string(s.name)),u.outlets,'Uni',false);
-                ctrls{2}.Value=strjoin(outN,', ');
-                if ~isempty(u.splitFractions)
-                    ctrls{3}.Value='fractions';
-                    ctrls{4}.Value=num2str(u.splitFractions);
-                else
-                    ctrls{3}.Value='flows';
-                    ctrls{4}.Value=num2str(u.specifiedOutletFlows);
-                end
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                outNms=strtrim(strsplit(ctrls{2}.Value,','));
-                outS={};
-                for k=1:numel(outNms)
-                    s=app.findStream(outNms{k});
-                    if isempty(s), uialert(d,sprintf('"%s" not found.',outNms{k}),'Error'); return; end
-                    outS{end+1}=s; %#ok
-                end
-                vals=str2num(ctrls{4}.Value); %#ok
-                if numel(vals)~=numel(outS)
-                    uialert(d,'Values length must match number of outlets.','Error'); return;
-                end
-                mode=lower(strtrim(ctrls{3}.Value));
-                def.type='Splitter'; def.inlet=ctrls{1}.Value; def.outlets=outNms;
-                if strcmp(mode,'fractions')
-                    def.splitFractions=vals;
-                    u=proc.units.Splitter(app.findStream(def.inlet),outS,'fractions',vals);
-                else
-                    def.specifiedOutletFlows=vals;
-                    u=proc.units.Splitter(app.findStream(def.inlet),outS,'flows',vals);
-                end
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSplitter(sNames, editIdx);
+            app.syncStateToModel();
         end
 
 
