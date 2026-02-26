@@ -83,7 +83,10 @@ function [T, solver] = runFromConfig(configFile, varargin)
     fprintf('MaxIter: %d   Tolerance: %.2e\n\n', maxIter, tolAbs);
 
     % --- Solve ---
+    autoScale = true;
+    if isfield(cfg, 'autoScale'), autoScale = cfg.autoScale; end
     solver = fs.solve('maxIter', maxIter, 'tolAbs', tolAbs, ...
+        'autoScale', autoScale, ...
         'printToConsole', opts.verbose, 'consoleStride', 1);
 
     % --- Results ---
@@ -454,7 +457,7 @@ function addStreamAliasesToFlowsheet(fs, aliasByOutlet, streams)
 end
 
 function tf = isIdentityLinkDef(def)
-    tf = strcmp(def.type, 'Link') && ~(isfield(def, 'mode') && ~strcmp(def.mode, 'identity'));
+    tf = strcmp(def.type, 'Link') && isfield(def, 'mode') && strcmp(def.mode, 'identity');
     if isfield(def, 'isIdentity')
         tf = logical(def.isIdentity);
     end

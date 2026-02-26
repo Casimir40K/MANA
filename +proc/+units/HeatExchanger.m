@@ -68,8 +68,8 @@ classdef HeatExchanger < handle
             eqs(end+1) = obj.coldOutlet.P - obj.coldInlet.P;
 
             % Enthalpy calculations
-            zh = obj.hotInlet.y(:)';
-            zc = obj.coldInlet.y(:)';
+            zh = obj.hotInlet.y(:)' / max(sum(obj.hotInlet.y), eps);
+            zc = obj.coldInlet.y(:)' / max(sum(obj.coldInlet.y), eps);
 
             h_h_in  = obj.thermoMix.h_mix_sensible(obj.hotInlet.T,  zh);
             h_h_out = obj.thermoMix.h_mix_sensible(obj.hotOutlet.T, zh);
@@ -114,13 +114,21 @@ classdef HeatExchanger < handle
             end
             idx = idx + 1; labels(idx) = "HX: hot pressure";
             idx = idx + 1; labels(idx) = "HX: cold pressure";
-            idx = idx + 1; labels(idx) = "HX: spec equation";
+            if isfinite(obj.Th_out)
+                idx = idx + 1; labels(idx) = "HX: temperature spec (Th_out)";
+            elseif isfinite(obj.Tc_out)
+                idx = idx + 1; labels(idx) = "HX: temperature spec (Tc_out)";
+            elseif isfinite(obj.duty)
+                idx = idx + 1; labels(idx) = "HX: energy spec (duty)";
+            else
+                idx = idx + 1; labels(idx) = "HX: spec equation";
+            end
             idx = idx + 1; labels(idx) = "HX: energy balance";
         end
 
         function Q = getDuty(obj)
             %GETDUTY Compute heat duty [kW] from current states.
-            zh = obj.hotInlet.y(:)';
+            zh = obj.hotInlet.y(:)' / max(sum(obj.hotInlet.y), eps);
             h_h_in  = obj.thermoMix.h_mix_sensible(obj.hotInlet.T, zh);
             h_h_out = obj.thermoMix.h_mix_sensible(obj.hotOutlet.T, zh);
             Q = obj.hotInlet.n_dot * (h_h_in - h_h_out);

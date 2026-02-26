@@ -57,7 +57,7 @@ classdef Turbine < handle
             eqs(end+1) = obj.outlet.P - P2;
 
             % Isentropic calculation
-            z = obj.inlet.y(:)';
+            z = obj.inlet.y(:)' / max(sum(obj.inlet.y), eps);
             T1 = obj.inlet.T;
             P1 = obj.inlet.P;
             h1 = obj.thermoMix.h_mix_sensible(T1, z);
@@ -89,7 +89,7 @@ classdef Turbine < handle
 
         function W = getPower(obj)
             %GETPOWER Power produced [kW]. W > 0 = power out.
-            z = obj.inlet.y(:)';
+            z = obj.inlet.y(:)' / max(sum(obj.inlet.y), eps);
             h1 = obj.thermoMix.h_mix_sensible(obj.inlet.T, z);
             h2 = obj.thermoMix.h_mix_sensible(obj.outlet.T, z);
             W = obj.inlet.n_dot * (h1 - h2);

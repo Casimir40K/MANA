@@ -61,7 +61,7 @@ classdef Compressor < handle
             eqs(end+1) = obj.outlet.P - P2;
 
             % Isentropic calculation
-            z = obj.inlet.y(:)';
+            z = obj.inlet.y(:)' / max(sum(obj.inlet.y), eps);
             T1 = obj.inlet.T;
             P1 = obj.inlet.P;
             h1 = obj.thermoMix.h_mix_sensible(T1, z);
@@ -95,7 +95,7 @@ classdef Compressor < handle
 
         function W = getPower(obj)
             %GETPOWER Compute shaft power [kW] from current stream states.
-            z = obj.inlet.y(:)';
+            z = obj.inlet.y(:)' / max(sum(obj.inlet.y), eps);
             h1 = obj.thermoMix.h_mix_sensible(obj.inlet.T, z);
             h2 = obj.thermoMix.h_mix_sensible(obj.outlet.T, z);
             W = obj.inlet.n_dot * (h2 - h1);

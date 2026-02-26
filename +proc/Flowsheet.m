@@ -5,6 +5,8 @@ classdef Flowsheet < handle
         units     % cell array of unit objects (proc.units.*) with equations()
         streamDisplayNames % user-visible stream names for reporting (incl. aliases)
         streamDisplayRefs  % stream object handles aligned with streamDisplayNames
+        hasSolveAttempted logical = false
+        lastSolveConverged logical = false
     end
 
     methods
@@ -65,31 +67,83 @@ classdef Flowsheet < handle
             % Usage:
             %   solver = fs.solve();
             %   solver = fs.solve('maxIter',80,'tolAbs',1e-9,'printToConsole',true,'consoleStride',10);
+            %   solver = fs.solve(...,'allowNonConverged',true);
 
             obj.validate();  % throws if not runnable
 
-            solver = proc.ProcessSolver(obj.streams, obj.units);
+            p = inputParser;
+            p.KeepUnmatched = true;
+            p.addParameter('mode', 'direct', @(x)(isstring(x)||ischar(x))&&isscalar(string(x)));
+            p.addParameter('allowNonConverged', false, @(x)islogical(x)&&isscalar(x));
+            p.addParameter('homotopyConversionStart', 1e-3, @(x)isnumeric(x)&&isscalar(x)&&x>=0&&x<=1);
+            p.addParameter('homotopyConversionSteps', 4, @(x)isnumeric(x)&&isscalar(x)&&x>=1&&mod(x,1)==0);
+            p.addParameter('homotopySharpnessStart', 0.5, @(x)isnumeric(x)&&isscalar(x)&&x>=0&&x<=1);
+            p.addParameter('homotopySharpnessSteps', 3, @(x)isnumeric(x)&&isscalar(x)&&x>=1&&mod(x,1)==0);
+            p.addParameter('homotopyLog', true, @(x)islogical(x)&&isscalar(x));
+            p.parse(varargin{:});
+            mode = lower(string(p.Results.mode));
+            allowNonConverged = p.Results.allowNonConverged;
+            homotopyConversionStart = p.Results.homotopyConversionStart;
+            homotopyConversionSteps = p.Results.homotopyConversionSteps;
+            homotopySharpnessStart = p.Results.homotopySharpnessStart;
+            homotopySharpnessSteps = p.Results.homotopySharpnessSteps;
+            homotopyLog = p.Results.homotopyLog;
 
             % Optional overrides: apply any name/value pair that matches a solver property
-            for k = 1:2:numel(varargin)
-                name = varargin{k};
-                val  = varargin{k+1};
-                if isprop(solver, name)
-                    solver.(name) = val;
-                else
-                    error('ProcessSolver has no property "%s"', name);
-                end
-            end
-
+            unmatched = p.Unmatched;
             % Print DOF summary (keep this behavior for now)
             obj.checkDOF();
 
-            solver.solve();
+            if mode == "direct"
+                solver = obj.runSingleSolve(unmatched);
+            elseif mode == "homotopy"
+                homotopyOpts = struct();
+                homotopyOpts.conversionStart = homotopyConversionStart;
+                homotopyOpts.conversionSteps = homotopyConversionSteps;
+                homotopyOpts.sharpnessStart = homotopySharpnessStart;
+                homotopyOpts.sharpnessSteps = homotopySharpnessSteps;
+                homotopyOpts.logProgress = homotopyLog;
+                solver = obj.solveWithHomotopy(unmatched, homotopyOpts);
+            else
+                error('Unsupported solve mode "%s". Use "direct" or "homotopy".', mode);
+            end
+
+            obj.hasSolveAttempted = true;
+            obj.lastSolveConverged = solver.converged;
+
+            if ~solver.converged && ~allowNonConverged
+                error('Flowsheet:NonConvergedSolve', ...
+                    ['Solve exited with a non-converged iterate; balances not satisfied. ' ...
+                     'exitFlag=%s, finalResidual=%.6e, finalWeightedResidual=%.6e. ' ...
+                     'Set allowNonConverged=true to inspect intermediate iterate only.'], ...
+                    char(solver.exitFlag), solver.finalResidual, solver.finalWeightedResidual);
+            end
         end
 
-        function T = streamTable(obj)
+        function T = streamTable(obj, varargin)
+            if obj.hasSolveAttempted && ~obj.lastSolveConverged
+                error('Flowsheet:NonConvergedResults', ...
+                    'Cannot present streamTable as final results: non-converged iterate; balances not satisfied.');
+            end
+
             % Table including: name, n_dot, T, P, y_i, and species molar flows n_i = n_dot*y_i
-            N  = numel(obj.streamDisplayRefs);
+            %
+            % Options:
+            %   'includeAliases' (default false): include one row for every
+            %       display name (aliases included).
+            %   'showAliasColumn' (default false): when aliases are suppressed,
+            %       append an aliases column that lists additional names.
+            p = inputParser;
+            p.addParameter('includeAliases', false, @(x)islogical(x)&&isscalar(x));
+            p.addParameter('showAliasColumn', false, @(x)islogical(x)&&isscalar(x));
+            p.parse(varargin{:});
+
+            includeAliases = p.Results.includeAliases;
+            showAliasColumn = p.Results.showAliasColumn;
+
+            [displayNames, displayRefs, aliasNames] = obj.selectStreamDisplayRows(includeAliases);
+
+            N  = numel(displayRefs);
             ns = numel(obj.species);
 
             names = strings(N,1);
@@ -100,8 +154,8 @@ classdef Flowsheet < handle
             Ni    = nan(N,ns);
 
             for i = 1:N
-                s = obj.streamDisplayRefs{i};
-                names(i) = string(obj.streamDisplayNames{i});
+                s = displayRefs{i};
+                names(i) = string(displayNames{i});
                 n_dot(i) = s.n_dot;
                 TT(i)    = s.T;
                 PP(i)    = s.P;
@@ -120,10 +174,156 @@ classdef Flowsheet < handle
             for j = 1:ns
                 T.(sprintf('n_%s', obj.species{j})) = Ni(:,j);
             end
+
+            if showAliasColumn && ~includeAliases
+                aliases = strings(N,1);
+                for i = 1:N
+                    aliases(i) = string(strjoin(aliasNames{i}, ', '));
+                end
+                T.aliases = aliases;
+            end
         end
     end
 
     methods (Access = private)
+        function solver = runSingleSolve(obj, solverOverrides)
+            solver = proc.ProcessSolver(obj.streams, obj.units);
+            fields = fieldnames(solverOverrides);
+            for i = 1:numel(fields)
+                name = fields{i};
+                val  = solverOverrides.(name);
+                if isprop(solver, name)
+                    solver.(name) = val;
+                else
+                    error('ProcessSolver has no property "%s"', name);
+                end
+            end
+            solver.solve();
+        end
+
+        function solver = solveWithHomotopy(obj, solverOverrides, opts)
+            [reactors, conversionTarget] = obj.collectUnitsWithProperty('conversion');
+            [separators, separatorTarget] = obj.collectUnitsWithProperty('phi');
+            [purges, purgeTarget] = obj.collectUnitsWithProperty('beta');
+
+            convStart = min(max(opts.conversionStart, 0), 1);
+            sharpStart = min(max(opts.sharpnessStart, 0), 1);
+
+            % Stage A: flatten conversion to make reaction source terms mild.
+            for i = 1:numel(reactors)
+                reactors{i}.conversion = convStart;
+            end
+            obj.logHomotopy(opts.logProgress, 'Stage A: conversion fixed near zero (X=%.4f).', convStart);
+            solver = obj.runSingleSolve(solverOverrides);
+            obj.assertStageConverged('A', solver, opts.logProgress);
+
+            % Stage B: ramp reactor conversion from Stage A value to target values.
+            if ~isempty(reactors)
+                lambdas = linspace(0, 1, opts.conversionSteps);
+                for k = 1:numel(lambdas)
+                    lam = lambdas(k);
+                    for i = 1:numel(reactors)
+                        reactors{i}.conversion = convStart + lam * (conversionTarget{i} - convStart);
+                    end
+                    obj.logHomotopy(opts.logProgress, ...
+                        'Stage B.%d/%d: conversion ramp lambda=%.3f.', k, numel(lambdas), lam);
+                    solver = obj.runSingleSolve(solverOverrides);
+                    obj.assertStageConverged(sprintf('B.%d', k), solver, opts.logProgress);
+                end
+            else
+                obj.logHomotopy(opts.logProgress, 'Stage B: no reactor conversion controls found; skipping.');
+            end
+
+            % Stage C: ramp split sharpness for separator and purge units.
+            hasSharpness = ~isempty(separators) || ~isempty(purges);
+            if hasSharpness
+                lambdas = linspace(0, 1, opts.sharpnessSteps);
+                for k = 1:numel(lambdas)
+                    lam = lambdas(k);
+                    for i = 1:numel(separators)
+                        tgt = separatorTarget{i};
+                        separators{i}.phi = sharpStart + lam .* (tgt - sharpStart);
+                    end
+                    for i = 1:numel(purges)
+                        tgt = purgeTarget{i};
+                        purges{i}.beta = sharpStart + lam .* (tgt - sharpStart);
+                    end
+                    obj.logHomotopy(opts.logProgress, ...
+                        'Stage C.%d/%d: separator/purge sharpness ramp lambda=%.3f.', k, numel(lambdas), lam);
+                    solver = obj.runSingleSolve(solverOverrides);
+                    obj.assertStageConverged(sprintf('C.%d', k), solver, opts.logProgress);
+                end
+            else
+                obj.logHomotopy(opts.logProgress, 'Stage C: no separator/purge sharpness controls found; skipping.');
+            end
+        end
+
+        function [unitsWithProp, targets] = collectUnitsWithProperty(obj, propName)
+            unitsWithProp = {};
+            targets = {};
+            for ui = 1:numel(obj.units)
+                u = obj.units{ui};
+                if isprop(u, propName)
+                    unitsWithProp{end+1} = u; %#ok<AGROW>
+                    targets{end+1} = u.(propName); %#ok<AGROW>
+                end
+            end
+        end
+
+        function assertStageConverged(obj, stageName, solver, doLog)
+            if solver.converged
+                obj.logHomotopy(doLog, ...
+                    'Stage %s converged (||r||=%.3e, ||W*r||=%.3e, exit=%s).', ...
+                    stageName, solver.finalResidual, solver.finalWeightedResidual, char(solver.exitFlag));
+            else
+                error('Flowsheet:HomotopyStageFailed', ...
+                    ['Homotopy stage %s did not converge. ' ...
+                     'exitFlag=%s, finalResidual=%.6e, finalWeightedResidual=%.6e.'], ...
+                    stageName, char(solver.exitFlag), solver.finalResidual, solver.finalWeightedResidual);
+            end
+        end
+
+        function logHomotopy(~, enabled, msg, varargin)
+            if ~enabled
+                return;
+            end
+            fprintf('[homotopy] %s\n', sprintf(msg, varargin{:}));
+        end
+
+        function [names, refs, aliasNames] = selectStreamDisplayRows(obj, includeAliases)
+            names = {};
+            refs = {};
+            aliasNames = {};
+
+            if includeAliases
+                names = obj.streamDisplayNames;
+                refs = obj.streamDisplayRefs;
+                aliasNames = repmat({{}}, numel(names), 1);
+                return;
+            end
+
+            for i = 1:numel(obj.streamDisplayRefs)
+                s = obj.streamDisplayRefs{i};
+                thisName = char(string(obj.streamDisplayNames{i}));
+                matchIdx = 0;
+                for j = 1:numel(refs)
+                    if isequal(refs{j}, s)
+                        matchIdx = j;
+                        break;
+                    end
+                end
+
+                if matchIdx == 0
+                    names{end+1} = thisName; %#ok<AGROW>
+                    refs{end+1} = s; %#ok<AGROW>
+                    aliasNames{end+1} = {}; %#ok<AGROW>
+                else
+                    aliasNames{matchIdx}{end+1} = thisName;
+                end
+            end
+            aliasNames = reshape(aliasNames, [], 1);
+        end
+
         function n = countUnknowns(obj)
             ns = numel(obj.species);
             n = 0;

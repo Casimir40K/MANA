@@ -29,6 +29,7 @@ function summary = run_regression_suite(varargin)
         @testCompressorSolve
         @testTurbineSolve
         @testHeaterCoolerSolve
+        @testHeaterCoolerCompositionPassThrough
         @testHeatExchangerSolve
     };
 
@@ -613,6 +614,64 @@ function testHeaterCoolerSolve()
     % Cooler with same magnitude duty should bring T back to ~300 K
     assert(abs(S4.T - 300) < 1.0, ...
         'Cooler with reversed heater duty should give T~300, got %.1f', S4.T);
+end
+
+
+function testHeaterCoolerCompositionPassThrough()
+    lib = thermo.ThermoLibrary();
+    species = {'N2', 'O2', 'Ar'};
+    mix = thermo.IdealGasMixture(species, lib);
+
+    y_ref = [0.65, 0.25, 0.10];
+
+    % Heater pass-through with multi-species composition
+    fsH = proc.Flowsheet(species);
+    Sh_in = proc.Stream('Sh_in', species);
+    Sh_in.setKnown('n_dot', 1.5);
+    Sh_in.setKnown('T', 320);
+    Sh_in.setKnown('P', 1.2e5);
+    Sh_in.setKnown('y', y_ref);
+
+    Sh_out = proc.Stream('Sh_out', species);
+    Sh_out.setGuess(1.5, [0.45 0.35 0.20], 450, 1.2e5);
+
+    fsH.addStream(Sh_in); fsH.addStream(Sh_out);
+    heater = proc.units.Heater(Sh_in, Sh_out, mix, 'Tout', 450);
+    fsH.addUnit(heater);
+
+    solverH = fsH.solve('maxIter', 80, 'tolAbs', 1e-9, 'printToConsole', false);
+    assert(solverH.residualHistory(end) < solverH.tolAbs, ...
+        'Heater composition pass-through case did not converge: ||r||=%.3e', solverH.residualHistory(end));
+
+    assert(max(abs(Sh_out.y - y_ref)) < 1e-10, ...
+        'Heater should preserve each species composition.');
+    assert(abs(Sh_out.n_dot - Sh_in.n_dot) < 1e-10, ...
+        'Heater should preserve molar flow.');
+
+    % Cooler pass-through with multi-species composition and duty spec
+    fsC = proc.Flowsheet(species);
+    Sc_in = proc.Stream('Sc_in', species);
+    Sc_in.setKnown('n_dot', 1.5);
+    Sc_in.setKnown('T', 450);
+    Sc_in.setKnown('P', 1.2e5);
+    Sc_in.setKnown('y', y_ref);
+
+    Sc_out = proc.Stream('Sc_out', species);
+    Sc_out.setGuess(1.5, [0.30 0.30 0.40], 360, 1.2e5);
+
+    fsC.addStream(Sc_in); fsC.addStream(Sc_out);
+    Q_heater = heater.getDuty();
+    cooler = proc.units.Cooler(Sc_in, Sc_out, mix, 'duty', -Q_heater);
+    fsC.addUnit(cooler);
+
+    solverC = fsC.solve('maxIter', 80, 'tolAbs', 1e-9, 'printToConsole', false);
+    assert(solverC.residualHistory(end) < solverC.tolAbs, ...
+        'Cooler composition pass-through case did not converge: ||r||=%.3e', solverC.residualHistory(end));
+
+    assert(max(abs(Sc_out.y - y_ref)) < 1e-10, ...
+        'Cooler should preserve each species composition.');
+    assert(abs(Sc_out.n_dot - Sc_in.n_dot) < 1e-10, ...
+        'Cooler should preserve molar flow.');
 end
 
 function testHeatExchangerSolve()

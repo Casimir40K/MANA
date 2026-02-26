@@ -37,6 +37,18 @@ classdef Mixer < handle
             eqs(end+1) = obj.outlet.P - obj.inlets{1}.P;
         end
 
+        function labels = equationLabels(obj)
+            nspecies = length(obj.outlet.y);
+            labels = strings(nspecies + 2, 1);
+            inNames = cellfun(@(s) char(string(s.name)), obj.inlets, 'Uni', false);
+            prefix = sprintf('Mixer {%s}->%s', strjoin(inNames, ','), string(obj.outlet.name));
+            for j = 1:nspecies
+                labels(j) = sprintf('%s: component %d mole flow', prefix, j);
+            end
+            labels(nspecies+1) = sprintf('%s: temperature', prefix);
+            labels(nspecies+2) = sprintf('%s: pressure', prefix);
+        end
+
         function str = describe(obj)
             inNames = cellfun(@(s) char(string(s.name)), obj.inlets, 'Uni', false);
             str = sprintf('Mixer: {%s} -> %s', strjoin(inNames, ', '), string(obj.outlet.name));
