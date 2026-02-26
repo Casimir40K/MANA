@@ -4232,45 +4232,15 @@ classdef MathLabApp < handle
 
 
         function dialogSource(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Feed Source', 620, 260, ...
-                {{'Outlet stream:','dropdown',sNames,'Stream receiving the feed conditions.'}, ...
-                 {'Total flow (NaN = not specified):','numeric',10,'Overall molar flowrate. Use NaN to leave unspecified.'}, ...
-                 {sprintf('Mole fractions (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Composition in species order. Use NaN to leave unspecified.'}, ...
-                 {sprintf('Component flows (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Per-species flowrates in species order. Use NaN to leave unspecified.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.outlet.name));
-                ctrls{2}.Value=u.totalFlow;
-                ctrls{3}.Value=num2str(u.composition);
-                ctrls{4}.Value=num2str(u.componentFlows);
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def=struct(); def.type='Source'; def.outlet=ctrls{1}.Value;
-                def.totalFlow=ctrls{2}.Value;
-                def.composition=str2num(ctrls{3}.Value); %#ok
-                def.componentFlows=str2num(ctrls{4}.Value); %#ok
-                opts = struct('totalFlow',def.totalFlow,'composition',def.composition,'componentFlows',def.componentFlows);
-                u=proc.units.Source(app.findStream(def.outlet), opts);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSource(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogSink(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Product Sink', 420, 140, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream consumed by this sink.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx}; ctrls{1}.Value=char(string(u.inlet.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def=struct('type','Sink','inlet',ctrls{1}.Value);
-                u=proc.units.Sink(app.findStream(def.inlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSink(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogDesignSpec(app, sNames, editIdx)
@@ -4292,110 +4262,27 @@ classdef MathLabApp < handle
         end
 
         function dialogConstraint(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Fixed Constraint', 600, 230, ...
-                {{'Stream:','dropdown',sNames,'Stream to constrain.'},{'Field:','dropdown',{'n_dot','T','P'},'Property to fix at the given value.'}, ...
-                 {'Value:','numeric',1,'Numerical value to enforce.'},{'Index (NaN for scalar):','numeric',NaN,'Use NaN for scalar fields, or an integer for a specific vector element.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.owner.name)); ctrls{2}.Value=u.field;
-                ctrls{3}.Value=u.value; ctrls{4}.Value=u.index;
-            end
-            app.addDialogButtons(d,@okCb);
-            function okCb()
-                def=struct('type','Constraint','stream',ctrls{1}.Value,'field',ctrls{2}.Value,...
-                    'value',ctrls{3}.Value,'index',ctrls{4}.Value);
-                u=proc.units.Constraint(app.findStream(def.stream),def.field,def.value,def.index);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogConstraint(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogRecycle(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Recycle', 500, 170, ...
-                {{'Source stream:','dropdown',sNames,'Computed stream that feeds back.'}, {'Tear stream:','dropdown',sNames,'Tear stream for iterative convergence.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.source.name));
-                ctrls{2}.Value=char(string(u.tear.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Recycle'; def.source=ctrls{1}.Value; def.tear=ctrls{2}.Value;
-                u=proc.units.Recycle(app.findStream(def.source), app.findStream(def.tear));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogRecycle(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogBypass(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Bypass', 660, 310, ...
-                {{'Feed stream:','dropdown',sNames,'Incoming stream before the split.'}, ...
-                 {'Process inlet:','dropdown',sNames,'Portion sent through the process.'}, ...
-                 {'Bypass stream:','dropdown',sNames,'Portion that skips the process.'}, ...
-                 {'Process return:','dropdown',sNames,'Processed stream returning for mixing.'}, ...
-                 {'Combined outlet:','dropdown',sNames,'Final mixed outlet.'}, ...
-                 {'Bypass fraction (0 to 1):','numeric',0.2,'Fraction of feed sent directly to the bypass.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.processInlet.name));
-                ctrls{3}.Value=char(string(u.bypassStream.name));
-                ctrls{4}.Value=char(string(u.processReturn.name));
-                ctrls{5}.Value=char(string(u.outlet.name));
-                ctrls{6}.Value=u.bypassFraction;
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Bypass';
-                def.inlet=ctrls{1}.Value; def.processInlet=ctrls{2}.Value;
-                def.bypassStream=ctrls{3}.Value; def.processReturn=ctrls{4}.Value;
-                def.outlet=ctrls{5}.Value; def.bypassFraction=ctrls{6}.Value;
-                u=proc.units.Bypass(app.findStream(def.inlet), app.findStream(def.processInlet), ...
-                    app.findStream(def.bypassStream), app.findStream(def.processReturn), ...
-                    app.findStream(def.outlet), def.bypassFraction);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogBypass(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogManifold(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Routing Manifold', 620, 250, ...
-                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Inlet streams (e.g. "S1, S2").'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet streams to connect (e.g. "S3, S4").'}, ...
-                 {'Route vector:','text','1 2','One inlet index per outlet (e.g. "1 2" means outlet 1 gets inlet 1, outlet 2 gets inlet 2).'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
-                outN=cellfun(@(s)char(string(s.name)),u.outlets,'Uni',false);
-                ctrls{1}.Value=strjoin(inN,', ');
-                ctrls{2}.Value=strjoin(outN,', ');
-                ctrls{3}.Value=num2str(u.route);
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                inNms=strtrim(strsplit(ctrls{1}.Value,','));
-                outNms=strtrim(strsplit(ctrls{2}.Value,','));
-                route=str2num(ctrls{3}.Value); %#ok
-                if numel(route)~=numel(outNms)
-                    uialert(d,'Route length must equal number of outlets.','Error'); return;
-                end
-                inS={}; outS={};
-                for k=1:numel(inNms)
-                    s=app.findStream(inNms{k}); if isempty(s), uialert(d,sprintf('"%s" not found.',inNms{k}),'Error'); return; end
-                    inS{end+1}=s; %#ok
-                end
-                for k=1:numel(outNms)
-                    s=app.findStream(outNms{k}); if isempty(s), uialert(d,sprintf('"%s" not found.',outNms{k}),'Error'); return; end
-                    outS{end+1}=s; %#ok
-                end
-                if any(route < 1) || any(route > numel(inS))
-                    uialert(d,'Route indices must reference inlet list.','Error'); return;
-                end
-                def.type='Manifold'; def.inlets=inNms; def.outlets=outNms; def.route=route;
-                u=proc.units.Manifold(inS,outS,route);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogManifold(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function saveConfigDialog(app)
