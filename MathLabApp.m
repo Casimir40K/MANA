@@ -1620,140 +1620,27 @@ classdef MathLabApp < handle
         end
 
         function dialogHeatExchanger(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Heat Exchanger', 650, 300, ...
-                {{'Hot inlet:','dropdown',sNames,'Hot stream entering the exchanger.'}, ...
-                 {'Hot outlet:','dropdown',sNames,'Hot stream leaving the exchanger.'}, ...
-                 {'Cold inlet:','dropdown',sNames,'Cold stream entering the exchanger.'}, ...
-                 {'Cold outlet:','dropdown',sNames,'Cold stream leaving the exchanger.'}, ...
-                 {'Spec mode:','dropdown',{'Th_out','Tc_out','duty'},'Specify hot outlet T, cold outlet T, or heat duty.'}, ...
-                 {sprintf('Spec value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(350,'temperature'),'Value for the chosen specification.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.hotInlet.name));
-                ctrls{2}.Value=char(string(u.hotOutlet.name));
-                ctrls{3}.Value=char(string(u.coldInlet.name));
-                ctrls{4}.Value=char(string(u.coldOutlet.name));
-                if isfinite(u.Th_out), ctrls{5}.Value='Th_out'; ctrls{6}.Value=app.fromSI(u.Th_out,'temperature');
-                elseif isfinite(u.Tc_out), ctrls{5}.Value='Tc_out'; ctrls{6}.Value=app.fromSI(u.Tc_out,'temperature');
-                else, ctrls{5}.Value='duty'; ctrls{6}.Value=app.fromSI(u.duty,'duty'); end
-            elseif numel(sNames)>=4
-                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3}; ctrls{4}.Value=sNames{4};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='HeatExchanger';
-                def.hotInlet=ctrls{1}.Value; def.hotOutlet=ctrls{2}.Value;
-                def.coldInlet=ctrls{3}.Value; def.coldOutlet=ctrls{4}.Value;
-                mode=ctrls{5}.Value; val=ctrls{6}.Value;
-                if strcmp(mode,'Th_out'), def.Th_out=app.toSI(val,'temperature');
-                elseif strcmp(mode,'Tc_out'), def.Tc_out=app.toSI(val,'temperature');
-                else, def.duty=app.toSI(val,'duty'); end
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {};
-                if isfield(def,'Th_out'), args=[args,{'Th_out',def.Th_out}]; end
-                if isfield(def,'Tc_out'), args=[args,{'Tc_out',def.Tc_out}]; end
-                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                u=proc.units.HeatExchanger(app.findStream(def.hotInlet),app.findStream(def.hotOutlet),...
-                    app.findStream(def.coldInlet),app.findStream(def.coldOutlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogHeatExchanger(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogCompressor(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Compressor', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the compressor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Compressed stream leaving the compressor.'}, ...
-                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(2e5,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
-                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Compressor isentropic efficiency.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=app.fromSI(u.Pout,'pressure');
-                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
-                ctrls{5}.Value=u.eta;
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Compressor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                mode=ctrls{3}.Value; val=ctrls{4}.Value;
-                if strcmp(mode,'Pout'), def.Pout=app.toSI(val,'pressure'); else, def.PR=val; end
-                def.eta=ctrls{5}.Value;
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {'eta', def.eta};
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Compressor(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogCompressor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogTurbine(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Turbine', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the turbine.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Expanded stream leaving the turbine.'}, ...
-                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(5e4,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
-                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Turbine isentropic efficiency.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=app.fromSI(u.Pout,'pressure');
-                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
-                ctrls{5}.Value=u.eta;
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Turbine'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                mode=ctrls{3}.Value; val=ctrls{4}.Value;
-                if strcmp(mode,'Pout'), def.Pout=app.toSI(val,'pressure'); else, def.PR=val; end
-                def.eta=ctrls{5}.Value;
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {'eta', def.eta};
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Turbine(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogTurbine(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogSeparator(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Separator', 620, 240, ...
-                {{'Feed stream:','dropdown',sNames,'Stream entering the separator.'}, ...
-                 {'Outlet A:','dropdown',sNames,'First outlet stream.'}, ...
-                 {'Outlet B:','dropdown',sNames,'Second outlet stream (remainder).'}, ...
-                 {sprintf('Split fractions to A (%d species):',ns),'text',num2str(repmat(0.5,1,ns)),'Fraction of each species sent to outlet A (0 to 1). Remainder goes to B.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outletA.name));
-                ctrls{3}.Value=char(string(u.outletB.name));
-                ctrls{4}.Value=num2str(u.phi);
-            elseif numel(sNames)>=3
-                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                phi=str2num(ctrls{4}.Value); %#ok
-                if numel(phi)~=ns
-                    uialert(d,sprintf('phi needs %d values.',ns),'Error'); return;
-                end
-                def.type='Separator'; def.inlet=ctrls{1}.Value;
-                def.outletA=ctrls{2}.Value; def.outletB=ctrls{3}.Value; def.phi=phi;
-                u=proc.units.Separator(app.findStream(def.inlet),...
-                    app.findStream(def.outletA),app.findStream(def.outletB),phi);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSeparator(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogPurge(app, sNames, editIdx)
