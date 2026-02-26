@@ -174,6 +174,14 @@ classdef MathLabApp < handle
     %  MODEL STATE
     % =====================================================================
     properties (Access = private)
+        AppState ui.AppState
+        SpeciesController ui.tabs.SpeciesTabController
+        StreamsController ui.tabs.StreamsTabController
+        UnitsController ui.tabs.UnitsTabController
+        SolveController ui.tabs.SolveTabController
+        ResultsController ui.tabs.ResultsTabController
+        SensitivityController ui.tabs.SensitivityTabController
+
         speciesNames cell   = {'H2','O2','H2O'}
         speciesMW    double = [2.016, 32.00, 18.015]
 
@@ -199,6 +207,8 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = public)
         function app = MathLabApp(configFile)
+            app.AppState = ui.AppState();
+            app.initControllers();
             app.buildUI();
             if nargin >= 1 && ~isempty(configFile)
                 app.loadConfig(configFile);
@@ -213,6 +223,73 @@ classdef MathLabApp < handle
     %  UI CONSTRUCTION
     % =====================================================================
     methods (Access = private)
+
+        function initControllers(app)
+            app.syncModelToState();
+            app.SpeciesController = ui.tabs.SpeciesTabController(app.AppState, struct( ...
+                'alertError', @(msg) uialert(app.Fig, msg, 'Error'), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'refreshUnitsListBox', @() app.refreshUnitsListBox(), ...
+                'refreshFlowsheetDiagram', @() app.refreshFlowsheetDiagram(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'refreshUnitTablePopup', @() app.refreshUnitTablePopup(), ...
+                'refreshStreamTablePopup', @() app.refreshStreamTablePopup(), ...
+                'refreshResultsTablesTab', @() app.refreshResultsTablesTab(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'refreshSpeciesPropsTable', @() app.refreshSpeciesPropsTable(), ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'setStatus', @(msg) app.setStatus(msg)));
+            app.StreamsController = ui.tabs.StreamsTabController(app.AppState, struct( ...
+                'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
+                'alertWithTitle', @(msg,titleTxt) uialert(app.Fig,msg,titleTxt), ...
+                'getNewStreamName', @() app.StreamNameField.Value, ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'getSelectedStreamRow', @() app.getSelectedStreamRow(), ...
+                'toSI', @(val,quantity) app.toSI(val,quantity)));
+            app.UnitsController = ui.tabs.UnitsTabController(app.AppState, struct( ...
+                'findStream', @(name) app.findStream(name), ...
+                'commitUnit', @(u,def,editIdx) app.commitUnit(u,def,editIdx), ...
+                'makeDialog', @(titleStr,w,h,fields) app.makeDialog(titleStr,w,h,fields), ...
+                'addDialogButtons', @(d,okFcn) app.addDialogButtons(d,okFcn)));
+            app.SolveController = ui.tabs.SolveTabController(app.AppState, struct( ...
+                'runSolve', @() app.runSolverCore()));
+            app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct());
+            app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
+                'runSensitivity', @() app.runSensitivityCore(), ...
+                'applySensParam', @(paramChoice,val) app.applySensParamCore(paramChoice,val), ...
+                'extractOutput', @(streamName,fieldStr) app.extractOutputCore(streamName,fieldStr)));
+        end
+
+        function syncModelToState(app)
+            app.AppState.speciesNames = app.speciesNames;
+            app.AppState.speciesMW = app.speciesMW;
+            app.AppState.streams = app.streams;
+            app.AppState.units = app.units;
+            app.AppState.unitDefs = app.unitDefs;
+            app.AppState.lastSolver = app.lastSolver;
+            app.AppState.lastFlowsheet = app.lastFlowsheet;
+            app.AppState.metadata.projectTitle = app.projectTitle;
+            app.AppState.metadata.unitPrefs = app.unitPrefs;
+            app.AppState.metadata.lastExportPath = app.lastExportPath;
+        end
+
+        function syncStateToModel(app)
+            app.speciesNames = app.AppState.speciesNames;
+            app.speciesMW = app.AppState.speciesMW;
+            app.streams = app.AppState.streams;
+            app.units = app.AppState.units;
+            app.unitDefs = app.AppState.unitDefs;
+            app.lastSolver = app.AppState.lastSolver;
+            app.lastFlowsheet = app.AppState.lastFlowsheet;
+            app.projectTitle = app.AppState.metadata.projectTitle;
+            app.unitPrefs = app.AppState.metadata.unitPrefs;
+            app.lastExportPath = app.AppState.metadata.lastExportPath;
+        end
 
         function buildUI(app)
             app.Fig = uifigure('Name','MathLab — Process Solver', ...
@@ -844,74 +921,33 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function refreshSpeciesTable(app)
-            N = numel(app.speciesNames);
-            data = cell(N, 2);
-            for i = 1:N
-                data{i,1} = app.speciesNames{i};
-                data{i,2} = app.speciesMW(i);
-            end
-            app.SpeciesTable.Data = data;
+            app.syncModelToState();
+            app.SpeciesController.refreshSpeciesTable(app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function onSpeciesTableEdit(app, ~, evt)
-            r = evt.Indices(1); c = evt.Indices(2);
-            if r < 1 || r > numel(app.speciesNames), return; end
-            if c == 1,     app.speciesNames{r} = evt.NewData;
-            elseif c == 2, app.speciesMW(r) = evt.NewData;
-            end
+            app.syncModelToState();
+            app.SpeciesController.onSpeciesTableEdit(evt);
+            app.syncStateToModel();
         end
 
         function addSpeciesRow(app)
-            nm = strtrim(app.NewSpeciesName.Value);
-            if isempty(nm), return; end
-            app.speciesNames{end+1} = nm;
-            app.speciesMW(end+1) = app.NewSpeciesMW.Value;
-            app.NewSpeciesName.Value = '';
-            app.refreshSpeciesTable();
+            app.syncModelToState();
+            app.SpeciesController.addSpeciesRow(app.NewSpeciesName, app.NewSpeciesMW, app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function removeSpeciesRow(app)
-            sel = app.SpeciesTable.Selection;
-            if isempty(sel), return; end
-            r = sel(1);
-            if r >= 1 && r <= numel(app.speciesNames)
-                app.speciesNames(r) = [];
-                app.speciesMW(r) = [];
-                app.refreshSpeciesTable();
-            end
+            app.syncModelToState();
+            app.SpeciesController.removeSpeciesRow(app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function applySpecies(app)
-            if isempty(app.speciesNames)
-                uialert(app.Fig, 'Species list cannot be empty.', 'Error'); return;
-            end
-            app.streams = {};
-            app.units = {};
-            app.unitDefs = {};
-            app.lastSolver = [];
-
-            % Default feed stream
-            app.addStreamInternal('Feed');
-            s = app.streams{1};
-            s.n_dot = 10; s.T = 300; s.P = 1e5;
-            ns = numel(app.speciesNames);
-            y0 = zeros(1,ns); y0(1) = 1;
-            s.y = y0;
-            s.known.n_dot = true; s.known.T = true; s.known.P = true;
-            s.known.y(:) = true;
-
-            app.refreshStreamTables();
-            app.refreshUnitsListBox();
-            app.refreshFlowsheetDiagram();
-            app.updateDOF();
-            app.refreshUnitTablePopup();
-            app.refreshStreamTablePopup();
-            app.refreshResultsTablesTab();
-            app.updateSensDropdowns();
-            app.refreshSpeciesPropsTable();
-            app.StreamNameField.Value = 'S2';
-            app.setStatus(sprintf('Species set: {%s}. Feed created.', ...
-                strjoin(app.speciesNames,', ')));
+            app.syncModelToState();
+            app.SpeciesController.applySpecies();
+            app.syncStateToModel();
         end
 
         function refreshSpeciesPropsTable(app)
@@ -963,37 +999,29 @@ classdef MathLabApp < handle
             app.streams{end+1} = s;
         end
 
+        function setNextStreamName(app, name)
+            app.StreamNameField.Value = char(string(name));
+        end
+
+        function row = getSelectedStreamRow(app)
+            sel = app.StreamValTable.Selection;
+            if isempty(sel)
+                row = [];
+                return;
+            end
+            row = sel(1);
+        end
+
         function addStreamFromUI(app)
-            name = strtrim(app.StreamNameField.Value);
-            if isempty(name)
-                uialert(app.Fig,'Enter a name.','Error'); return;
-            end
-            for i = 1:numel(app.streams)
-                if strcmp(string(app.streams{i}.name), name)
-                    uialert(app.Fig,sprintf('"%s" exists.',name),'Duplicate'); return;
-                end
-            end
-            app.addStreamInternal(name);
-            app.refreshStreamTables();
-            app.updateDOF();
-            app.updateSensDropdowns();
-            % Auto-increment
-            tok = regexp(name, '^([A-Za-z_]*)(\d+)$','tokens');
-            if ~isempty(tok)
-                app.StreamNameField.Value = sprintf('%s%d',tok{1}{1},str2double(tok{1}{2})+1);
-            end
+            app.syncModelToState();
+            app.StreamsController.addStreamFromUI();
+            app.syncStateToModel();
         end
 
         function removeSelectedStream(app)
-            sel = app.StreamValTable.Selection;
-            if isempty(sel), return; end
-            row = sel(1);
-            if row >= 1 && row <= numel(app.streams)
-                app.streams(row) = [];
-                app.refreshStreamTables();
-                app.updateDOF();
-                app.updateSensDropdowns();
-            end
+            app.syncModelToState();
+            app.StreamsController.removeSelectedStream();
+            app.syncStateToModel();
         end
 
         function refreshStreamTables(app)
@@ -1039,34 +1067,16 @@ classdef MathLabApp < handle
             app.StreamKnownTable.ColumnEditable = [false, true, true, true, true];
         end
 
-        function onStreamValEdit(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            ns = numel(app.speciesNames);
-            switch col
-                case 2, s.n_dot = app.toSI(evt.NewData,'flow');
-                case 3, s.T = app.toSI(evt.NewData,'temperature');
-                case 4, s.P = app.toSI(evt.NewData,'pressure');
-                otherwise
-                    j = col - 4;
-                    if j >= 1 && j <= ns, s.y(j) = evt.NewData; end
-            end
-            app.refreshStreamTables();
+        function onStreamValEdit(app, src, evt)
+            app.syncModelToState();
+            app.StreamsController.onStreamValEdit(src, evt);
+            app.syncStateToModel();
         end
 
-        function onKnownEdit(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            val = logical(evt.NewData);
-            switch col
-                case 2, s.known.n_dot = val;
-                case 3, s.known.T = val;
-                case 4, s.known.P = val;
-                case 5, s.known.y(:) = val;
-            end
-            app.updateDOF();
+        function onKnownEdit(app, src, evt)
+            app.syncModelToState();
+            app.StreamsController.onKnownEdit(src, evt);
+            app.syncStateToModel();
         end
 
         function syncStreamsFromTable(app)
@@ -1552,67 +1562,9 @@ classdef MathLabApp < handle
         end
 
         function dialogReactor(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            spStr = strjoin(app.speciesNames,', ');
-
-            d = uifigure('Name','Reactor (Generic)','Position',[250 180 660 420], ...
-                'Resize','off','WindowStyle','modal');
-            dg = uigridlayout(d,[8 2],'ColumnWidth',{170,'1x'}, ...
-                'RowHeight',repmat({28},1,8),'Padding',[12 12 12 12],'RowSpacing',4);
-
-            uilabel(dg,'Text','Inlet stream:','FontWeight','bold');
-            ddIn = uidropdown(dg,'Items',sNames);
-            ddIn.Tooltip = 'Feed stream entering the reactor.';
-            uilabel(dg,'Text','Outlet stream:','FontWeight','bold');
-            ddOut = uidropdown(dg,'Items',sNames);
-            ddOut.Tooltip = 'Product stream leaving the reactor.';
-            uilabel(dg,'Text','Conversion (0 to 1):','FontWeight','bold');
-            efConv = uieditfield(dg,'numeric','Value',0.5,'Limits',[0 1]);
-            efConv.Tooltip = 'Fractional conversion of the limiting reactant.';
-            lbl=uilabel(dg,'Text',sprintf('Species: %s (1..%d)',spStr,ns));
-            lbl.FontColor=[0.4 0.4 0.4]; uilabel(dg,'Text','');
-            uilabel(dg,'Text','Reactant species indices:','FontWeight','bold');
-            efReact = uieditfield(dg,'text','Value','1 2');
-            efReact.Tooltip = 'Species indices consumed by the reaction.';
-            uilabel(dg,'Text','Product species indices:','FontWeight','bold');
-            efProd = uieditfield(dg,'text','Value',num2str(ns));
-            efProd.Tooltip = 'Species indices produced by the reaction.';
-            uilabel(dg,'Text','Stoichiometric coefficients:','FontWeight','bold');
-            efStoich = uieditfield(dg,'text','Value',num2str(zeros(1,ns)));
-            efStoich.Tooltip = 'One coefficient per species in the shown species order.';
-
-            btnG = uigridlayout(dg,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0]);
-            btnG.Layout.Row=8; btnG.Layout.Column=[1 2];
-            uibutton(btnG,'push','Text','OK','FontWeight','bold', ...
-                'BackgroundColor',[0.82 0.95 0.82],'ButtonPushedFcn',@(~,~)okCb());
-            uibutton(btnG,'push','Text','Cancel','ButtonPushedFcn',@(~,~)delete(d));
-
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ddIn.Value=char(string(u.inlet.name));
-                ddOut.Value=char(string(u.outlet.name));
-                efConv.Value=u.conversion;
-                r=u.reactions(1);
-                efReact.Value=num2str(r.reactants);
-                efProd.Value=num2str(r.products);
-                efStoich.Value=num2str(r.stoich);
-            elseif numel(sNames)>=2, ddOut.Value=sNames{2}; end
-
-            function okCb()
-                rxn.reactants=str2num(efReact.Value); %#ok
-                rxn.products=str2num(efProd.Value); %#ok
-                rxn.stoich=str2num(efStoich.Value); %#ok
-                rxn.name="reaction";
-                if isempty(rxn.reactants)||isempty(rxn.products)||numel(rxn.stoich)~=ns
-                    uialert(d,sprintf('Stoich must have %d entries.',ns),'Error'); return;
-                end
-                def.type='Reactor'; def.inlet=ddIn.Value; def.outlet=ddOut.Value;
-                def.conversion=efConv.Value; def.reactions=rxn;
-                u=proc.units.Reactor(app.findStream(def.inlet),...
-                    app.findStream(def.outlet),rxn,efConv.Value);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogStoichiometricReactor(app, sNames, editIdx)
@@ -2102,6 +2054,13 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function runSolver(app)
+            % Temporary wrapper during controller migration.
+            app.syncModelToState();
+            app.SolveController.runSolve();
+            app.syncStateToModel();
+        end
+
+        function runSolverCore(app)
             app.syncStreamsFromTable();
 
             if isempty(app.streams)
@@ -4307,33 +4266,9 @@ classdef MathLabApp < handle
         end
 
         function dialogAdjust(app, sNames, editIdx)
-            if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Adjust Controller', 640, 280, ...
-                {{'DesignSpec unit index:','numeric',1,'Which DesignSpec unit this controller satisfies.'}, ...
-                 {'Manipulated unit index:','numeric',1,'Which unit''s parameter will be varied.'}, ...
-                 {'Parameter name:','text','beta','Property to adjust (e.g. beta, conversion, duty).'}, ...
-                 {'Parameter index (NaN for scalar):','numeric',NaN,'Use NaN for scalar parameters, or an integer for vector elements.'}, ...
-                 {'Minimum value:','numeric',0,'Lower bound for the adjusted parameter.'}, ...
-                 {'Maximum value:','numeric',1,'Upper bound for the adjusted parameter.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{3}.Value=u.variableField; ctrls{4}.Value=u.variableIndex;
-                ctrls{5}.Value=u.minValue; ctrls{6}.Value=u.maxValue;
-            end
-            app.addDialogButtons(d,@okCb);
-            function okCb()
-                dsIdx=round(ctrls{1}.Value); muIdx=round(ctrls{2}.Value);
-                if dsIdx<1||dsIdx>numel(app.units) || ~isa(app.units{dsIdx},'proc.units.DesignSpec')
-                    uialert(d,'DesignSpec index must refer to an existing DesignSpec unit.','Error'); return;
-                end
-                if muIdx<1||muIdx>numel(app.units)
-                    uialert(d,'Manipulated unit index invalid.','Error'); return;
-                end
-                def=struct('type','Adjust','designSpecIndex',dsIdx,'ownerIndex',muIdx,'field',ctrls{3}.Value,...
-                    'index',ctrls{4}.Value,'minValue',ctrls{5}.Value,'maxValue',ctrls{6}.Value);
-                u=proc.units.Adjust(app.units{dsIdx}, app.units{muIdx}, def.field, def.index, def.minValue, def.maxValue);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogAdjust(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogCalculator(app, sNames, editIdx)
@@ -5164,6 +5099,13 @@ classdef MathLabApp < handle
         end
 
         function runSensitivity(app)
+            % Temporary wrapper during controller migration.
+            app.syncModelToState();
+            app.SensitivityController.onRunSensitivity();
+            app.syncStateToModel();
+        end
+
+        function runSensitivityCore(app)
             app.syncStreamsFromTable();
             if isempty(app.streams) || isempty(app.units)
                 uialert(app.Fig,'Add streams and units first.','Error'); return;
@@ -5257,6 +5199,13 @@ classdef MathLabApp < handle
         end
 
         function applySensParam(app, paramChoice, val)
+            % Temporary wrapper during controller migration.
+            app.syncModelToState();
+            app.SensitivityController.applySensParam(paramChoice, val);
+            app.syncStateToModel();
+        end
+
+        function applySensParamCore(app, paramChoice, val)
             [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
             if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
                 u = app.units{unitIdx};
@@ -5310,6 +5259,13 @@ classdef MathLabApp < handle
         end
 
         function val = extractOutput(app, streamName, fieldStr)
+            % Temporary wrapper during controller migration.
+            app.syncModelToState();
+            val = app.SensitivityController.extractOutput(streamName, fieldStr);
+            app.syncStateToModel();
+        end
+
+        function val = extractOutputCore(app, streamName, fieldStr)
             s = app.findStream(streamName);
             if isempty(s), val=NaN; return; end
             if strcmp(fieldStr,'n_dot'), val=s.n_dot;
