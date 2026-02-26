@@ -761,5 +761,142 @@ classdef UnitsTabController < handle
                 obj.Services.commitUnit(u,def,editIdx); delete(d);
             end
         end
+
+        function dialogHeatExchanger(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Heat Exchanger', 650, 300, ...
+                {{'Hot inlet:','dropdown',sNames,'Hot stream entering the exchanger.'}, ...
+                 {'Hot outlet:','dropdown',sNames,'Hot stream leaving the exchanger.'}, ...
+                 {'Cold inlet:','dropdown',sNames,'Cold stream entering the exchanger.'}, ...
+                 {'Cold outlet:','dropdown',sNames,'Cold stream leaving the exchanger.'}, ...
+                 {'Spec mode:','dropdown',{'Th_out','Tc_out','duty'},'Specify hot outlet T, cold outlet T, or heat duty.'}, ...
+                 {sprintf('Spec value (%s or %s):', obj.Services.unitLabel('temperature','T'), obj.Services.unitLabel('duty','Q')),'numeric',obj.Services.fromSI(350,'temperature'),'Value for the chosen specification.'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.hotInlet.name));
+                ctrls{2}.Value=char(string(u.hotOutlet.name));
+                ctrls{3}.Value=char(string(u.coldInlet.name));
+                ctrls{4}.Value=char(string(u.coldOutlet.name));
+                if isfinite(u.Th_out), ctrls{5}.Value='Th_out'; ctrls{6}.Value=obj.Services.fromSI(u.Th_out,'temperature');
+                elseif isfinite(u.Tc_out), ctrls{5}.Value='Tc_out'; ctrls{6}.Value=obj.Services.fromSI(u.Tc_out,'temperature');
+                else, ctrls{5}.Value='duty'; ctrls{6}.Value=obj.Services.fromSI(u.duty,'duty'); end
+            elseif numel(sNames)>=4
+                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3}; ctrls{4}.Value=sNames{4};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='HeatExchanger';
+                def.hotInlet=ctrls{1}.Value; def.hotOutlet=ctrls{2}.Value;
+                def.coldInlet=ctrls{3}.Value; def.coldOutlet=ctrls{4}.Value;
+                mode=ctrls{5}.Value; val=ctrls{6}.Value;
+                if strcmp(mode,'Th_out'), def.Th_out=obj.Services.toSI(val,'temperature');
+                elseif strcmp(mode,'Tc_out'), def.Tc_out=obj.Services.toSI(val,'temperature');
+                else, def.duty=obj.Services.toSI(val,'duty'); end
+                mix = obj.Services.buildThermoMixForGUI();
+                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
+                args = {};
+                if isfield(def,'Th_out'), args=[args,{'Th_out',def.Th_out}]; end
+                if isfield(def,'Tc_out'), args=[args,{'Tc_out',def.Tc_out}]; end
+                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
+                u=proc.units.HeatExchanger(obj.Services.findStream(def.hotInlet),obj.Services.findStream(def.hotOutlet),...
+                    obj.Services.findStream(def.coldInlet),obj.Services.findStream(def.coldOutlet),mix,args{:});
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogCompressor(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Compressor', 560, 240, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the compressor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Compressed stream leaving the compressor.'}, ...
+                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', obj.Services.unitLabel('pressure','P')),'numeric',obj.Services.fromSI(2e5,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
+                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Compressor isentropic efficiency.'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=obj.Services.fromSI(u.Pout,'pressure');
+                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
+                ctrls{5}.Value=u.eta;
+            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='Compressor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                mode=ctrls{3}.Value; val=ctrls{4}.Value;
+                if strcmp(mode,'Pout'), def.Pout=obj.Services.toSI(val,'pressure'); else, def.PR=val; end
+                def.eta=ctrls{5}.Value;
+                mix = obj.Services.buildThermoMixForGUI();
+                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
+                args = {'eta', def.eta};
+                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
+                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
+                u=proc.units.Compressor(obj.Services.findStream(def.inlet),obj.Services.findStream(def.outlet),mix,args{:});
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogTurbine(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Turbine', 560, 240, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the turbine.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Expanded stream leaving the turbine.'}, ...
+                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', obj.Services.unitLabel('pressure','P')),'numeric',obj.Services.fromSI(5e4,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
+                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Turbine isentropic efficiency.'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=obj.Services.fromSI(u.Pout,'pressure');
+                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
+                ctrls{5}.Value=u.eta;
+            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='Turbine'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                mode=ctrls{3}.Value; val=ctrls{4}.Value;
+                if strcmp(mode,'Pout'), def.Pout=obj.Services.toSI(val,'pressure'); else, def.PR=val; end
+                def.eta=ctrls{5}.Value;
+                mix = obj.Services.buildThermoMixForGUI();
+                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
+                args = {'eta', def.eta};
+                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
+                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
+                u=proc.units.Turbine(obj.Services.findStream(def.inlet),obj.Services.findStream(def.outlet),mix,args{:});
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogSeparator(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            ns = numel(obj.State.speciesNames);
+            [d, ctrls] = obj.Services.makeDialog('Separator', 620, 240, ...
+                {{'Feed stream:','dropdown',sNames,'Stream entering the separator.'}, ...
+                 {'Outlet A:','dropdown',sNames,'First outlet stream.'}, ...
+                 {'Outlet B:','dropdown',sNames,'Second outlet stream (remainder).'}, ...
+                 {sprintf('Split fractions to A (%d species):',ns),'text',num2str(repmat(0.5,1,ns)),'Fraction of each species sent to outlet A (0 to 1). Remainder goes to B.'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outletA.name));
+                ctrls{3}.Value=char(string(u.outletB.name));
+                ctrls{4}.Value=num2str(u.phi);
+            elseif numel(sNames)>=3
+                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                phi=str2num(ctrls{4}.Value); %#ok<ST2NM>
+                if numel(phi)~=ns
+                    uialert(d,sprintf('phi needs %d values.',ns),'Error'); return;
+                end
+                def.type='Separator'; def.inlet=ctrls{1}.Value;
+                def.outletA=ctrls{2}.Value; def.outletB=ctrls{3}.Value; def.phi=phi;
+                u=proc.units.Separator(obj.Services.findStream(def.inlet),...
+                    obj.Services.findStream(def.outletA),obj.Services.findStream(def.outletB),phi);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
     end
 end
