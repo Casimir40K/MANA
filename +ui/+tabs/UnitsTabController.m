@@ -119,5 +119,62 @@ classdef UnitsTabController < handle
                 delete(d);
             end
         end
+
+        function dialogDesignSpec(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            [d, ctrls] = obj.Services.makeDialog('Design Specification', 620, 230, ...
+                {{'Stream to measure:','dropdown',sNames,'Stream whose property is evaluated.'}, ...
+                 {'Metric:','dropdown',{'total_flow','comp_flow','mole_fraction'},'Which quantity to track.'}, ...
+                 {'Species index:','numeric',1,'Species index (used with comp_flow or mole_fraction).'}, ...
+                 {'Target value:','numeric',0.5,'Desired value that the metric should reach.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value = char(string(u.stream.name));
+                ctrls{2}.Value = u.metric;
+                ctrls{3}.Value = u.componentIndex;
+                ctrls{4}.Value = u.target;
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def = struct('type','DesignSpec','stream',ctrls{1}.Value,'metric',ctrls{2}.Value, ...
+                    'componentIndex',ctrls{3}.Value,'target',ctrls{4}.Value);
+                u = proc.units.DesignSpec(obj.Services.findStream(def.stream), def.metric, def.target, def.componentIndex);
+                obj.Services.commitUnit(u, def, editIdx);
+                delete(d);
+            end
+        end
+
+        function dialogCalculator(obj, sNames, editIdx)
+            if nargin < 3, editIdx = []; end
+            [d, ctrls] = obj.Services.makeDialog('Stream Calculator', 700, 310, ...
+                {{'Output stream:','dropdown',sNames,'Stream that receives the result.'}, ...
+                 {'Output field:','dropdown',{'n_dot','T','P'},'Which property to set on the output stream.'}, ...
+                 {'Input stream A:','dropdown',sNames,'First input stream.'}, ...
+                 {'Field A:','dropdown',{'n_dot','T','P'},'Property to read from stream A.'}, ...
+                 {'Operator:','dropdown',{'+' '-' '*' '/'},'Arithmetic operator: result = A op B.'}, ...
+                 {'Input stream B:','dropdown',sNames,'Second input stream.'}, ...
+                 {'Field B:','dropdown',{'n_dot','T','P'},'Property to read from stream B.'}});
+            if ~isempty(editIdx)
+                u = obj.State.units{editIdx};
+                ctrls{1}.Value = char(string(u.lhsOwner.name));
+                ctrls{2}.Value = u.lhsField;
+                ctrls{3}.Value = char(string(u.aOwner.name));
+                ctrls{4}.Value = u.aField;
+                ctrls{5}.Value = u.operator;
+                ctrls{6}.Value = char(string(u.bOwner.name));
+                ctrls{7}.Value = u.bField;
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def = struct('type','Calculator','lhsStream',ctrls{1}.Value,'lhsField',ctrls{2}.Value, ...
+                    'aStream',ctrls{3}.Value,'aField',ctrls{4}.Value,'operator',ctrls{5}.Value, ...
+                    'bStream',ctrls{6}.Value,'bField',ctrls{7}.Value);
+                u = proc.units.Calculator(obj.Services.findStream(def.lhsStream),def.lhsField, ...
+                    obj.Services.findStream(def.aStream),def.aField,def.operator, ...
+                    obj.Services.findStream(def.bStream),def.bField);
+                obj.Services.commitUnit(u, def, editIdx);
+                delete(d);
+            end
+        end
     end
 end
