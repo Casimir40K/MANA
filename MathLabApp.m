@@ -39,7 +39,7 @@ classdef MathLabApp < handle
         StreamNameField
         StreamDOFLabel       % live DOF on this tab too
 
-        % -- Tab 3: Units & Flowsheet --
+        % -- Tab 3: Units --
         UnitsTab
         UnitsListBox
         AddUnitDropDown
@@ -65,10 +65,8 @@ classdef MathLabApp < handle
 
         % -- Tab 5: Results --
         ResultsTab
-        ResultsSummaryTab
         ResultsTablesTab
         ResultsStabilityTab
-        ResultsExportTab
         ResultsAxes
         ResultsXScaleDropDown
         ResultsYScaleDropDown
@@ -116,34 +114,19 @@ classdef MathLabApp < handle
         ResultsStabilitySweepMinField
         ResultsStabilitySweepMaxField
         ResultsStabilitySweepPtsField
-        ResultsSummaryStatusLabel
-        ResultsSummaryResidualLabel
-        ResultsSummaryIterLabel
-        ResultsSummaryStreamLabel
-        ResultsSummaryUnitLabel
-        ResultsSummaryDeltaLabel
-        ResultsSummaryExportBtn
-        ResultsSummaryStreamTable
-        ResultsSummaryUnitTable
-        ResultsSummaryBottomLabel
-        ResultsExportSummaryCsvBtn
-        ResultsExportTracesCsvBtn
-        ResultsExportSnapshotsCsvBtn
-        ResultsExportStreamCsvBtn
-        ResultsExportUnitCsvBtn
         ResultsStreamTable
         ResultsUnitTable
         ResultsTablesStatusLabel
+        ResultsTablesStatusBanner
+        ResultsTablesResidualLabel
+        ResultsTablesIterLabel
         ResultsNyquistAxes
         ResultsStabilitySweepAxes
         ResultsStabilityStatusLabel
-        ResultsExportStatusArea
-        ResultsExportAllCsvBtn
 
         % -- Tab 6: Sensitivity --
         SensTab
         SensParamDropDown
-        SensUnitDropDown
         SensMinField
         SensMaxField
         SensNptsField
@@ -254,11 +237,9 @@ classdef MathLabApp < handle
             app.buildStreamsTab();
             app.buildUnitsTab();
             app.buildSolveTab();
-            app.buildResultsSummaryTab();
             app.buildResultsTab();
             app.buildResultsTablesTab();
             app.buildResultsStabilityTab();
-            app.buildResultsExportTab();
             app.buildSensitivityTab();
         end
 
@@ -266,7 +247,7 @@ classdef MathLabApp < handle
         %  TAB 0: SETUP & CONFIG
         % ================================================================
         function buildSetupTab(app)
-            t = uitab(app.Tabs, 'Title', ' Setup ');
+            t = uitab(app.Tabs, 'Title', 'Setup');
             app.SetupTab = t;
 
             gl = uigridlayout(t, [1 2], 'ColumnWidth',{'1x','1x'}, ...
@@ -290,20 +271,25 @@ classdef MathLabApp < handle
                 'Padding',[0 0 0 0], 'ColumnSpacing',6, 'RowSpacing',3);
             uilabel(unitRow,'Text','Display units:','FontWeight','bold');
             app.FlowUnitDropDown = uidropdown(unitRow, 'Items', {'mol/s','kmol/s'}, ...
-                'Value', app.unitPrefs.flow, 'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('flow', src.Value));
+                'Value', app.unitPrefs.flow, 'Tooltip', 'Molar flow rate unit', ...
+                'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('flow', src.Value));
             app.TempUnitDropDown = uidropdown(unitRow, 'Items', {'K','C'}, ...
-                'Value', app.unitPrefs.temperature, 'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('temperature', src.Value));
+                'Value', app.unitPrefs.temperature, 'Tooltip', 'Temperature unit', ...
+                'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('temperature', src.Value));
             app.PressureUnitDropDown = uidropdown(unitRow, 'Items', {'Pa','kPa','bar'}, ...
-                'Value', app.unitPrefs.pressure, 'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('pressure', src.Value));
+                'Value', app.unitPrefs.pressure, 'Tooltip', 'Pressure unit', ...
+                'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('pressure', src.Value));
             app.DutyUnitDropDown = uidropdown(unitRow, 'Items', {'W','kW','MW'}, ...
-                'Value', app.unitPrefs.duty, 'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('duty', src.Value));
+                'Value', app.unitPrefs.duty, 'Tooltip', 'Heat duty unit', ...
+                'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('duty', src.Value));
 
-            uilabel(unitRow,'Text','');
+            uilabel(unitRow,'Text','');  % second row label spacer
             app.PowerUnitDropDown = uidropdown(unitRow, 'Items', {'W','kW','MW'}, ...
-                'Value', app.unitPrefs.power, 'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('power', src.Value));
-            uilabel(unitRow,'Text','');
-            uilabel(unitRow,'Text','');
-            uilabel(unitRow,'Text','');
+                'Value', app.unitPrefs.power, 'Tooltip', 'Shaft power unit', ...
+                'ValueChangedFcn', @(src,~) app.onUnitPrefsChanged('power', src.Value));
+            uilabel(unitRow,'Text','');  % spacer
+            uilabel(unitRow,'Text','');  % spacer
+            uilabel(unitRow,'Text','');  % spacer
 
             % Save / Load row
             slRow = uigridlayout(leftG, [1 2], 'ColumnWidth',{'1x','1x'}, ...
@@ -340,13 +326,15 @@ classdef MathLabApp < handle
                 'WORKFLOW'; ...
                 '========'; ...
                 ''; ...
-                '1. SETUP    — set project title, save/load config.'; ...
-                '2. SPECIES  — define names, MW, thermo props. Apply.'; ...
-                '3. STREAMS  — add streams, set values & known flags.'; ...
-                '4. UNITS    — add unit ops, pick stream connections.'; ...
-                '5. SOLVE    — check DOF, click Solve, see residuals.'; ...
-                '6. RESULTS  — full solved stream table.'; ...
-                '7. SENSITIVITY — sweep a parameter.'; ...
+                '1. SETUP       — Set project title, save/load config.'; ...
+                '2. SPECIES     — Define names, MW, thermo props. Apply.'; ...
+                '3. STREAMS     — Add streams, set values & known flags.'; ...
+                '4. UNITS       — Add unit operations, pick streams.'; ...
+                '5. SOLVE       — Check DOF, click Solve, see residuals.'; ...
+                '6. RESULTS     — View stream & unit tables, export CSV.'; ...
+                '7. TRENDS      — Plot convergence & solved-state trends.'; ...
+                '8. STABILITY   — Nyquist & pole analysis.'; ...
+                '9. SENSITIVITY — Sweep any flowsheet parameter.'; ...
                 ''; ...
                 'SAVE / LOAD'; ...
                 '==========='; ...
@@ -371,7 +359,7 @@ classdef MathLabApp < handle
         %  TAB 1: SPECIES & PROPERTIES
         % ================================================================
         function buildSpeciesTab(app)
-            t = uitab(app.Tabs, 'Title', ' Species ');
+            t = uitab(app.Tabs, 'Title', 'Species');
             app.SpeciesTab = t;
 
             gl = uigridlayout(t, [1 2], 'ColumnWidth',{'1x','1x'}, ...
@@ -413,7 +401,7 @@ classdef MathLabApp < handle
         %  TAB 2: STREAMS
         % ================================================================
         function buildStreamsTab(app)
-            t = uitab(app.Tabs, 'Title', ' Streams ');
+            t = uitab(app.Tabs, 'Title', 'Streams');
             app.StreamsTab = t;
             gl = uigridlayout(t, [4 1], 'RowHeight',{24,'1x','1x',36}, ...
                 'Padding',[12 12 12 12], 'RowSpacing',6);
@@ -456,10 +444,10 @@ classdef MathLabApp < handle
         end
 
         % ================================================================
-        %  TAB 3: UNITS & FLOWSHEET
+        %  TAB 3: UNITS
         % ================================================================
         function buildUnitsTab(app)
-            t = uitab(app.Tabs, 'Title', ' Units & Flowsheet ');
+            t = uitab(app.Tabs, 'Title', 'Units');
             app.UnitsTab = t;
             gl = uigridlayout(t, [2 2], 'ColumnWidth',{'1x','1x'}, ...
                 'RowHeight',{24, '1x'}, 'Padding',[12 12 12 12], 'RowSpacing',6);
@@ -514,7 +502,7 @@ classdef MathLabApp < handle
         %  TAB 4: SOLVE  (rebuilt — simple 4-row layout)
         % ================================================================
         function buildSolveTab(app)
-            t = uitab(app.Tabs, 'Title', ' Solve ');
+            t = uitab(app.Tabs, 'Title', 'Solve');
             app.SolveTab = t;
 
             % 5 rows: DOF bar | controls row | metrics bar | convergence plot | log
@@ -589,52 +577,8 @@ classdef MathLabApp < handle
         % ================================================================
         %  TAB 5: RESULTS
         % ================================================================
-        function buildResultsSummaryTab(app)
-            t = uitab(app.Tabs, 'Title', ' Results - Summary ');
-            app.ResultsSummaryTab = t;
-            gl = uigridlayout(t, [3 1], 'RowHeight',{52,'1x',24}, ...
-                'Padding',[12 12 12 12], 'RowSpacing',8);
-
-            % --- Top row: status banner ---
-            topG = uigridlayout(gl, [2 6], 'RowHeight',{24,24}, ...
-                'ColumnWidth',{'fit','fit','fit','fit','1x','fit'}, ...
-                'Padding',[0 0 0 0], 'ColumnSpacing',14);
-            topG.Layout.Row = 1;
-            app.ResultsSummaryStatusLabel = uilabel(topG, 'Text','Status: Not solved', ...
-                'FontWeight','bold', 'FontSize',13);
-            app.ResultsSummaryResidualLabel = uilabel(topG, 'Text','Residual: -', 'FontSize',12);
-            app.ResultsSummaryIterLabel = uilabel(topG, 'Text','Iterations: -', 'FontSize',12);
-            app.ResultsSummaryDeltaLabel = uilabel(topG, 'Text','', 'FontSize',11, 'FontColor',[0.4 0.4 0.4]);
-            uilabel(topG, 'Text','');  % spacer
-            app.ResultsSummaryExportBtn = uibutton(topG, 'push', 'Text','Export Summary CSV', ...
-                'ButtonPushedFcn',@(~,~) app.exportResultsSummaryCsv());
-            % Second header row: stream/unit counts
-            app.ResultsSummaryStreamLabel = uilabel(topG, 'Text','Streams: -', 'FontSize',11, 'FontColor',[0.3 0.3 0.3]);
-            app.ResultsSummaryStreamLabel.Layout.Row = 2; app.ResultsSummaryStreamLabel.Layout.Column = 1;
-            app.ResultsSummaryUnitLabel = uilabel(topG, 'Text','Units: -', 'FontSize',11, 'FontColor',[0.3 0.3 0.3]);
-            app.ResultsSummaryUnitLabel.Layout.Row = 2; app.ResultsSummaryUnitLabel.Layout.Column = 2;
-
-            % --- Middle: stream table + unit table side by side ---
-            midG = uigridlayout(gl, [2 2], 'RowHeight',{24,'1x'}, 'ColumnWidth',{'1x','1x'}, ...
-                'Padding',[0 0 0 0], 'ColumnSpacing',10, 'RowSpacing',4);
-            midG.Layout.Row = 2;
-            uilabel(midG, 'Text','Stream Summary', 'FontWeight','bold', 'FontSize',12);
-            uilabel(midG, 'Text','Unit Summary', 'FontWeight','bold', 'FontSize',12);
-            app.ResultsSummaryStreamTable = uitable(midG, 'ColumnEditable',false);
-            app.ResultsSummaryStreamTable.Layout.Row = 2; app.ResultsSummaryStreamTable.Layout.Column = 1;
-            app.ResultsSummaryUnitTable = uitable(midG, 'ColumnEditable',false);
-            app.ResultsSummaryUnitTable.Layout.Row = 2; app.ResultsSummaryUnitTable.Layout.Column = 2;
-
-            % --- Bottom: status ---
-            app.ResultsSummaryBottomLabel = uilabel(gl, 'Text','Run solve to populate summary.', ...
-                'FontColor',[0.35 0.35 0.35]);
-            app.ResultsSummaryBottomLabel.Layout.Row = 3;
-
-            app.refreshResultsSummaryPanel();
-        end
-
         function buildResultsTab(app)
-            t = uitab(app.Tabs, 'Title', ' Results - Trends ');
+            t = uitab(app.Tabs, 'Title', 'Trends');
             app.ResultsTab = t;
             gl = uigridlayout(t, [1 2], 'ColumnWidth',{420,'1x'}, ...
                 'Padding',[8 8 8 8], 'ColumnSpacing',6);
@@ -711,22 +655,68 @@ classdef MathLabApp < handle
         end
 
         function buildResultsTablesTab(app)
-            t = uitab(app.Tabs, 'Title', ' Results - Tables ');
+            t = uitab(app.Tabs, 'Title', 'Results');
             app.ResultsTablesTab = t;
-            gl = uigridlayout(t, [3 2], 'RowHeight',{28,'1x',24}, 'ColumnWidth',{'1x','1x'}, ...
+            gl = uigridlayout(t, [5 2], ...
+                'RowHeight',{28, 28, '1x', 'fit', 24}, ...
+                'ColumnWidth',{'1x','1x'}, ...
                 'Padding',[12 12 12 12], 'ColumnSpacing',8, 'RowSpacing',6);
-            uilabel(gl,'Text','Stream results', 'FontWeight','bold');
-            uilabel(gl,'Text','Unit results', 'FontWeight','bold');
+
+            % --- Row 1: Solve status banner ---
+            bannerG = uigridlayout(gl, [1 3], ...
+                'ColumnWidth',{'fit','fit','1x'}, ...
+                'Padding',[8 3 8 3], 'ColumnSpacing',16);
+            bannerG.Layout.Row = 1; bannerG.Layout.Column = [1 2];
+            bannerG.BackgroundColor = [0.92 0.94 0.97];
+            app.ResultsTablesStatusBanner = uilabel(bannerG, ...
+                'Text','Status: Not solved', ...
+                'FontWeight','bold', 'FontSize',12, ...
+                'FontColor',[0.6 0.1 0.1]);
+            app.ResultsTablesResidualLabel = uilabel(bannerG, ...
+                'Text','Residual: -', 'FontSize',11, ...
+                'FontColor',[0.3 0.3 0.3]);
+            app.ResultsTablesIterLabel = uilabel(bannerG, ...
+                'Text','Iterations: -', 'FontSize',11, ...
+                'FontColor',[0.3 0.3 0.3]);
+
+            % --- Row 2: Table headers ---
+            uilabel(gl,'Text','Stream Results', 'FontWeight','bold');
+            uilabel(gl,'Text','Unit Results', 'FontWeight','bold');
+
+            % --- Row 3: Tables ---
             app.ResultsStreamTable = uitable(gl, 'ColumnEditable', false);
             app.ResultsUnitTable = uitable(gl, 'ColumnEditable', false);
-            app.ResultsTablesStatusLabel = uilabel(gl, 'Text','Run solve to refresh tables for reporting.', 'FontColor',[0.35 0.35 0.35]);
-            app.ResultsTablesStatusLabel.Layout.Row = 3;
+
+            % --- Row 4: Export buttons ---
+            expG = uigridlayout(gl, [1 6], ...
+                'ColumnWidth',{130, 130, 130, 130, 150, '1x'}, ...
+                'Padding',[0 0 0 0], 'ColumnSpacing',6);
+            expG.Layout.Row = 4; expG.Layout.Column = [1 2];
+            uibutton(expG,'push','Text','Export Stream CSV', ...
+                'ButtonPushedFcn',@(~,~) app.exportResultsStreamCsv());
+            uibutton(expG,'push','Text','Export Unit CSV', ...
+                'ButtonPushedFcn',@(~,~) app.exportResultsUnitCsv());
+            uibutton(expG,'push','Text','Export Summary CSV', ...
+                'ButtonPushedFcn',@(~,~) app.exportResultsSummaryCsv());
+            uibutton(expG,'push','Text','Export Traces CSV', ...
+                'ButtonPushedFcn',@(~,~) app.exportResultsTracesCsv());
+            uibutton(expG,'push','Text','Export Full Bundle', ...
+                'FontWeight','bold', ...
+                'ButtonPushedFcn',@(~,~) app.exportResultsBundleCsv());
+            uilabel(expG,'Text','');
+
+            % --- Row 5: Status ---
+            app.ResultsTablesStatusLabel = uilabel(gl, ...
+                'Text','Run solve to populate results.', ...
+                'FontColor',[0.35 0.35 0.35]);
+            app.ResultsTablesStatusLabel.Layout.Row = 5;
             app.ResultsTablesStatusLabel.Layout.Column = [1 2];
+
             app.refreshResultsTablesTab();
         end
 
         function buildResultsStabilityTab(app)
-            t = uitab(app.Tabs, 'Title', ' Results - Stability ');
+            t = uitab(app.Tabs, 'Title', 'Stability');
             app.ResultsStabilityTab = t;
             gl = uigridlayout(t, [4 4], 'RowHeight',{28,34,48,'1x'}, ...
                 'ColumnWidth',{'fit','1x','fit','1x'}, 'Padding',[12 12 12 12], 'ColumnSpacing',8, 'RowSpacing',6);
@@ -778,25 +768,11 @@ classdef MathLabApp < handle
             grid(app.ResultsStabilitySweepAxes,'on'); xlabel(app.ResultsStabilitySweepAxes,'Re(pole)'); ylabel(app.ResultsStabilitySweepAxes,'Im(pole)');
         end
 
-        function buildResultsExportTab(app)
-            t = uitab(app.Tabs, 'Title', ' Results - Export ');
-            app.ResultsExportTab = t;
-            gl = uigridlayout(t, [7 1], 'RowHeight',{28,28,28,28,28,28,'1x'}, 'Padding',[12 12 12 12], 'RowSpacing',8);
-            uilabel(gl,'Text','CSV-first reporting exports', 'FontWeight','bold', 'FontSize',13);
-            app.ResultsExportSummaryCsvBtn = uibutton(gl,'push','Text','Export Summary CSV', 'ButtonPushedFcn',@(~,~) app.exportResultsSummaryCsv());
-            app.ResultsExportTracesCsvBtn = uibutton(gl,'push','Text','Export Trends Traces CSV', 'ButtonPushedFcn',@(~,~) app.exportResultsTracesCsv());
-            app.ResultsExportSnapshotsCsvBtn = uibutton(gl,'push','Text','Export Snapshot History CSV', 'ButtonPushedFcn',@(~,~) app.exportResultsSnapshotsCsv());
-            app.ResultsExportStreamCsvBtn = uibutton(gl,'push','Text','Export Stream Table CSV', 'ButtonPushedFcn',@(~,~) app.exportResultsStreamCsv());
-            app.ResultsExportUnitCsvBtn = uibutton(gl,'push','Text','Export Unit Table CSV', 'ButtonPushedFcn',@(~,~) app.exportResultsUnitCsv());
-            app.ResultsExportAllCsvBtn = uibutton(gl,'push','Text','Export Full CSV Bundle', 'FontWeight','bold', 'ButtonPushedFcn',@(~,~) app.exportResultsBundleCsv());
-            app.ResultsExportStatusArea = uitextarea(gl, 'Editable','off', 'Value', {'Export log will appear here.'});
-        end
-
         % ================================================================
         %  TAB 6: SENSITIVITY
         % ================================================================
         function buildSensitivityTab(app)
-            t = uitab(app.Tabs, 'Title', ' Sensitivity ');
+            t = uitab(app.Tabs, 'Title', 'Sensitivity');
             app.SensTab = t;
             gl = uigridlayout(t, [2 1], 'RowHeight',{190,'1x'}, ...
                 'Padding',[12 12 12 12], 'RowSpacing',8);
@@ -810,15 +786,12 @@ classdef MathLabApp < handle
                 'Padding', [8 8 8 8], 'RowSpacing', 4, 'ColumnSpacing', 8);
 
             % Row 1
-            uilabel(topG,'Text','Sweep param:','FontWeight','bold');
+            uilabel(topG,'Text','Sweep parameter:','FontWeight','bold');
             app.SensParamDropDown = uidropdown(topG, ...
-                'Items',{'Reactor conversion','Purge beta', ...
-                         'Separator phi(1)','Stream n_dot','Stream T','Stream P'}, ...
-                'Value','Reactor conversion', ...
+                'Items',{'(build flowsheet first)'}, ...
+                'Value','(build flowsheet first)', ...
                 'ValueChangedFcn',@(~,~) app.onSensParamChanged());
-            uilabel(topG,'Text','Target unit/stream:','FontWeight','bold');
-            app.SensUnitDropDown = uidropdown(topG,'Items',{'(none)'},'Value','(none)', ...
-                'ValueChangedFcn',@(~,~) app.validateSensSelection());
+            app.SensParamDropDown.Layout.Column = [2 4];
 
             % Row 2
             uilabel(topG,'Text','Min / Max / Pts:','FontWeight','bold');
@@ -828,7 +801,7 @@ classdef MathLabApp < handle
             app.SensMaxField = uieditfield(rangeG,'numeric','Value',0.9);
             app.SensNptsField = uieditfield(rangeG,'numeric','Value',15, ...
                 'Limits',[2 200],'RoundFractionalValues','on');
-            uilabel(topG,'Text','Output stream (canonical):','FontWeight','bold');
+            uilabel(topG,'Text','Output stream:','FontWeight','bold');
             app.SensOutputStreamDD = uidropdown(topG,'Items',{'(none)'},'Value','(none)');
 
             % Row 3
@@ -1533,9 +1506,9 @@ classdef MathLabApp < handle
 
         function dialogLink(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Stream Link', 440, 170, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering this pass-through link.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Stream leaving this pass-through link.'}});
+            [d, ctrls] = app.makeDialog('Stream Link', 440, 170, ...
+                {{'Inlet:','dropdown',sNames,'Stream entering the link (state is copied to outlet).'}, ...
+                 {'Outlet:','dropdown',sNames,'Stream receiving the copied state.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1551,10 +1524,10 @@ classdef MathLabApp < handle
 
         function dialogMixer(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Mixer', 520, 180, ...
+            [d, ctrls] = app.makeDialog('Mixer', 520, 180, ...
                 {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '), ...
-                  'Feed streams to combine in the mixer.'}, ...
-                 {'Mixed outlet stream:','dropdown',sNames,'Single outlet stream carrying the mixed state.'}});
+                  'Streams to combine (e.g. "S1, S2").'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Combined outlet stream.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
@@ -1583,7 +1556,7 @@ classdef MathLabApp < handle
             ns = numel(app.speciesNames);
             spStr = strjoin(app.speciesNames,', ');
 
-            d = uifigure('Name','Configure Generic Reactor','Position',[250 180 660 420], ...
+            d = uifigure('Name','Reactor (Generic)','Position',[250 180 660 420], ...
                 'Resize','off','WindowStyle','modal');
             dg = uigridlayout(d,[8 2],'ColumnWidth',{170,'1x'}, ...
                 'RowHeight',repmat({28},1,8),'Padding',[12 12 12 12],'RowSpacing',4);
@@ -1594,9 +1567,9 @@ classdef MathLabApp < handle
             uilabel(dg,'Text','Outlet stream:','FontWeight','bold');
             ddOut = uidropdown(dg,'Items',sNames);
             ddOut.Tooltip = 'Product stream leaving the reactor.';
-            uilabel(dg,'Text','Single-pass conversion (0–1):','FontWeight','bold');
+            uilabel(dg,'Text','Conversion (0 to 1):','FontWeight','bold');
             efConv = uieditfield(dg,'numeric','Value',0.5,'Limits',[0 1]);
-            efConv.Tooltip = 'Fraction converted in this reactor model.';
+            efConv.Tooltip = 'Fractional conversion of the limiting reactant.';
             lbl=uilabel(dg,'Text',sprintf('Species: %s (1..%d)',spStr,ns));
             lbl.FontColor=[0.4 0.4 0.4]; uilabel(dg,'Text','');
             uilabel(dg,'Text','Reactant species indices:','FontWeight','bold');
@@ -1645,13 +1618,13 @@ classdef MathLabApp < handle
         function dialogStoichiometricReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
             ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Configure Stoichiometric Reactor', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream to the reactor.'}, ...
+            [d, ctrls] = app.makeDialog('Stoichiometric Reactor', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
                  {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {'Stoichiometric coefficients (nu):','text',num2str(zeros(1,ns)),'One value per species in the displayed species order.'}, ...
-                 {'Extent mode (fixed or solve):','text','fixed','Use "fixed" to set extent directly or "solve" to solve from constraints.'}, ...
-                 {'Reaction extent (if fixed):','numeric',0,'Extent value when mode is fixed.'}, ...
-                 {'Reference species index:','numeric',1,'Species index used for normalization/sign convention.'}});
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species in order (negative = consumed, positive = produced).'}, ...
+                 {'Extent mode:','text','fixed','"fixed" to specify extent directly, or "solve" to let the solver find it.'}, ...
+                 {'Reaction extent:','numeric',0,'Molar extent of reaction (used when mode is "fixed").'}, ...
+                 {'Reference species index:','numeric',1,'Species index for sign convention.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1681,13 +1654,13 @@ classdef MathLabApp < handle
         function dialogConversionReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
             ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Configure Conversion Reactor', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream to the reactor.'}, ...
+            [d, ctrls] = app.makeDialog('Conversion Reactor', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
                  {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {'Stoichiometric coefficients (nu):','text',num2str(zeros(1,ns)),'One value per species in the displayed species order.'}, ...
-                 {'Key species index:','numeric',1,'Conversion is defined with respect to this species.'}, ...
-                 {'Conversion mode (fixed or solve):','text','fixed','Use "fixed" to enter conversion or "solve" to solve it.'}, ...
-                 {'Key-species conversion X (if fixed):','numeric',0.5,'Fraction reacted for the key species.'}});
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
+                 {'Key species index:','numeric',1,'Conversion is defined relative to this species.'}, ...
+                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
+                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the key species that reacts.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1716,14 +1689,14 @@ classdef MathLabApp < handle
 
         function dialogYieldReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Yield Reactor', 640, 300, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream to the reactor.'}, ...
+            [d, ctrls] = app.makeDialog('Yield Reactor', 640, 300, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
                  {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {'Basis species index:','numeric',1,'Species consumed to define conversion and yields.'}, ...
-                 {'Conversion mode (fixed or solve):','text','fixed','Use "fixed" to enter conversion or "solve" to solve it.'}, ...
-                 {'Basis-species conversion X (if fixed):','numeric',0.5,'Fraction of basis species converted.'}, ...
-                 {'Product species indices:','text','2','Indices of species produced by the reaction.'}, ...
-                 {'Product yields per basis reacted:','text','1','Yield value for each listed product species.'}});
+                 {'Basis species index:','numeric',1,'Species consumed; conversion and yields are defined relative to this.'}, ...
+                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
+                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the basis species that reacts.'}, ...
+                 {'Product species indices:','text','2','Indices of species produced (space-separated, e.g. "2 3").'}, ...
+                 {'Product yields:','text','1','Moles of each product per mole of basis species reacted.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1757,12 +1730,12 @@ classdef MathLabApp < handle
         function dialogEquilibriumReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
             ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Configure Equilibrium Reactor', 620, 260, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream to the reactor.'}, ...
+            [d, ctrls] = app.makeDialog('Equilibrium Reactor', 620, 260, ...
+                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
                  {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {'Stoichiometric coefficients (nu):','text',num2str(zeros(1,ns)),'One value per species in the displayed species order.'}, ...
-                 {'Equilibrium constant K:','numeric',1,'Equilibrium constant for the modeled reaction.'}, ...
-                 {'Reference species index:','numeric',1,'Species index used in equilibrium calculations.'}});
+                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
+                 {'Equilibrium constant (Keq):','numeric',1,'Equilibrium constant for the reaction.'}, ...
+                 {'Reference species index:','numeric',1,'Species index for equilibrium calculation.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1789,13 +1762,13 @@ classdef MathLabApp < handle
 
         function dialogHeater(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Heater', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the heater.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Heated stream leaving the unit.'}, ...
-                 {'Thermal specification mode:','dropdown',{'Tout','duty'},'Choose to set outlet temperature or heat duty.'}, ...
-                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','Tout'), app.unitLabel('duty','Duty')),'numeric',app.fromSI(400,'temperature'),'Value for the selected thermal specification mode.'}, ...
-                 {'Pressure specification mode:','dropdown',{'pass-through','dP','Pout','PR'},'Keep pressure, set pressure change, set outlet pressure, or set pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s, %s, or PR):', app.unitLabel('pressure','dP'), app.unitLabel('pressure','Pout')),'numeric',0,'Value for selected pressure mode (ignored for pass-through).'}});
+            [d, ctrls] = app.makeDialog('Heater', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the heater.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Heated stream leaving the heater.'}, ...
+                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
+                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(400,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
+                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1856,13 +1829,13 @@ classdef MathLabApp < handle
 
         function dialogCooler(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Cooler', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the cooler.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Cooled stream leaving the unit.'}, ...
-                 {'Thermal specification mode:','dropdown',{'Tout','duty'},'Choose to set outlet temperature or heat duty.'}, ...
-                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','Tout'), app.unitLabel('duty','Duty')),'numeric',app.fromSI(300,'temperature'),'Value for the selected thermal specification mode.'}, ...
-                 {'Pressure specification mode:','dropdown',{'pass-through','dP','Pout','PR'},'Keep pressure, set pressure change, set outlet pressure, or set pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s, %s, or PR):', app.unitLabel('pressure','dP'), app.unitLabel('pressure','Pout')),'numeric',0,'Value for selected pressure mode (ignored for pass-through).'}});
+            [d, ctrls] = app.makeDialog('Cooler', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the cooler.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Cooled stream leaving the cooler.'}, ...
+                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
+                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(300,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
+                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1923,13 +1896,13 @@ classdef MathLabApp < handle
 
         function dialogHeatExchanger(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Heat Exchanger', 650, 300, ...
-                {{'Hot-side inlet stream:','dropdown',sNames,'Hot stream entering the exchanger.'}, ...
-                 {'Hot-side outlet stream:','dropdown',sNames,'Hot stream leaving the exchanger.'}, ...
-                 {'Cold-side inlet stream:','dropdown',sNames,'Cold stream entering the exchanger.'}, ...
-                 {'Cold-side outlet stream:','dropdown',sNames,'Cold stream leaving the exchanger.'}, ...
-                 {'Specification mode:','dropdown',{'Th_out','Tc_out','duty'},'Set hot outlet temperature, cold outlet temperature, or duty.'}, ...
-                 {sprintf('Specification value (%s, %s, or %s):', app.unitLabel('temperature','Th_out'), app.unitLabel('temperature','Tc_out'), app.unitLabel('duty','Duty')),'numeric',app.fromSI(350,'temperature'),'Value for the selected heat-exchanger specification mode.'}});
+            [d, ctrls] = app.makeDialog('Heat Exchanger', 650, 300, ...
+                {{'Hot inlet:','dropdown',sNames,'Hot stream entering the exchanger.'}, ...
+                 {'Hot outlet:','dropdown',sNames,'Hot stream leaving the exchanger.'}, ...
+                 {'Cold inlet:','dropdown',sNames,'Cold stream entering the exchanger.'}, ...
+                 {'Cold outlet:','dropdown',sNames,'Cold stream leaving the exchanger.'}, ...
+                 {'Spec mode:','dropdown',{'Th_out','Tc_out','duty'},'Specify hot outlet T, cold outlet T, or heat duty.'}, ...
+                 {sprintf('Spec value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(350,'temperature'),'Value for the chosen specification.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.hotInlet.name));
@@ -1965,12 +1938,12 @@ classdef MathLabApp < handle
 
         function dialogCompressor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Compressor', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the compressor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Compressed stream leaving the unit.'}, ...
-                 {'Pressure specification mode:','dropdown',{'Pout','PR'},'Set absolute outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure target (%s or PR):', app.unitLabel('pressure','Pout')),'numeric',app.fromSI(2e5,'pressure'),'Value for the selected pressure mode.'}, ...
-                 {'Isentropic efficiency (0-1]:','numeric',0.85,'Compressor efficiency used for power estimation.'}});
+            [d, ctrls] = app.makeDialog('Compressor', 560, 240, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the compressor.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Compressed stream leaving the compressor.'}, ...
+                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(2e5,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
+                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Compressor isentropic efficiency.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -1997,12 +1970,12 @@ classdef MathLabApp < handle
 
         function dialogTurbine(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Turbine', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the turbine.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Expanded stream leaving the unit.'}, ...
-                 {'Pressure specification mode:','dropdown',{'Pout','PR'},'Set absolute outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure target (%s or PR):', app.unitLabel('pressure','Pout')),'numeric',app.fromSI(5e4,'pressure'),'Value for the selected pressure mode.'}, ...
-                 {'Isentropic efficiency (0-1]:','numeric',0.85,'Turbine efficiency used for power estimation.'}});
+            [d, ctrls] = app.makeDialog('Turbine', 560, 240, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the turbine.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Expanded stream leaving the turbine.'}, ...
+                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(5e4,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
+                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Turbine isentropic efficiency.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -2030,11 +2003,11 @@ classdef MathLabApp < handle
         function dialogSeparator(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
             ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Configure Separator', 620, 240, ...
+            [d, ctrls] = app.makeDialog('Separator', 620, 240, ...
                 {{'Feed stream:','dropdown',sNames,'Stream entering the separator.'}, ...
-                 {'Product stream A:','dropdown',sNames,'First outlet stream.'}, ...
-                 {'Product stream B:','dropdown',sNames,'Second outlet stream.'}, ...
-                 {sprintf('Split to stream A by species (%s):',strjoin(app.speciesNames,',')),'text',num2str(repmat(0.5,1,ns)),'One split fraction per species (0 to 1).'}});
+                 {'Outlet A:','dropdown',sNames,'First outlet stream.'}, ...
+                 {'Outlet B:','dropdown',sNames,'Second outlet stream (remainder).'}, ...
+                 {sprintf('Split fractions to A (%d species):',ns),'text',num2str(repmat(0.5,1,ns)),'Fraction of each species sent to outlet A (0 to 1). Remainder goes to B.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -2060,11 +2033,11 @@ classdef MathLabApp < handle
 
         function dialogPurge(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Purge Split', 560, 230, ...
-                {{'Feed stream:','dropdown',sNames,'Stream to be split into recycle and purge.'}, ...
-                 {'Recycle stream:','dropdown',sNames,'Returned stream after the split.'}, ...
+            [d, ctrls] = app.makeDialog('Purge Split', 560, 230, ...
+                {{'Feed stream:','dropdown',sNames,'Stream to split into recycle and purge.'}, ...
+                 {'Recycle stream:','dropdown',sNames,'Stream returned to the loop.'}, ...
                  {'Purge stream:','dropdown',sNames,'Bleed stream removed from the loop.'}, ...
-                 {'Recycle fraction beta (0..1):','numeric',0.9,'Fraction sent to recycle; remaining flow goes to purge.'}});
+                 {'Recycle fraction (0 to 1):','numeric',0.9,'Fraction of feed sent to recycle. Remainder goes to purge.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -2857,117 +2830,25 @@ classdef MathLabApp < handle
         end
 
         function refreshResultsSummaryPanel(app)
-            if isempty(app.ResultsSummaryStatusLabel) || ~isvalid(app.ResultsSummaryStatusLabel)
-                return;
-            end
+            % Update the compact status banner on the Results-Tables tab
             s = app.resultsSummary;
 
-            % --- Header labels ---
-            statusColor = [0.6 0.1 0.1];
-            if strcmp(s.status, 'Converged'), statusColor = [0.1 0.5 0.1]; end
-            app.ResultsSummaryStatusLabel.Text = sprintf('Status: %s', s.status);
-            app.ResultsSummaryStatusLabel.FontColor = statusColor;
-            if isfinite(s.residual)
-                app.ResultsSummaryResidualLabel.Text = sprintf('Residual: %.3e', s.residual);
-            else
-                app.ResultsSummaryResidualLabel.Text = 'Residual: -';
+            if ~isempty(app.ResultsTablesStatusBanner) && isvalid(app.ResultsTablesStatusBanner)
+                statusColor = [0.6 0.1 0.1];
+                if strcmp(s.status, 'Converged'), statusColor = [0.1 0.5 0.1]; end
+                app.ResultsTablesStatusBanner.Text = sprintf('Status: %s', s.status);
+                app.ResultsTablesStatusBanner.FontColor = statusColor;
             end
-            app.ResultsSummaryIterLabel.Text = sprintf('Iterations: %d', s.iterations);
-            app.ResultsSummaryDeltaLabel.Text = s.deltaText;
-
-            % --- Stream summary table ---
-            nStreams = 0; nUnits = 0;
-            if ~isempty(app.ResultsSummaryStreamTable) && isvalid(app.ResultsSummaryStreamTable)
-                Ts = app.buildSummaryStreamTable();
-                app.ResultsSummaryStreamTable.Data = Ts;
-                app.ResultsSummaryStreamTable.ColumnName = Ts.Properties.VariableNames;
-                nStreams = height(Ts);
-            end
-
-            % --- Unit summary table ---
-            if ~isempty(app.ResultsSummaryUnitTable) && isvalid(app.ResultsSummaryUnitTable)
-                Tu = app.buildSummaryUnitTable();
-                app.ResultsSummaryUnitTable.Data = Tu;
-                app.ResultsSummaryUnitTable.ColumnName = Tu.Properties.VariableNames;
-                nUnits = height(Tu);
-            end
-
-            if ~isempty(app.ResultsSummaryStreamLabel) && isvalid(app.ResultsSummaryStreamLabel)
-                app.ResultsSummaryStreamLabel.Text = sprintf('Streams: %d', nStreams);
-            end
-            if ~isempty(app.ResultsSummaryUnitLabel) && isvalid(app.ResultsSummaryUnitLabel)
-                app.ResultsSummaryUnitLabel.Text = sprintf('Units: %d', nUnits);
-            end
-
-            % Bottom status
-            if ~isempty(app.ResultsSummaryBottomLabel) && isvalid(app.ResultsSummaryBottomLabel)
-                if isempty(app.lastSolver)
-                    app.ResultsSummaryBottomLabel.Text = 'Run solve to populate summary.';
+            if ~isempty(app.ResultsTablesResidualLabel) && isvalid(app.ResultsTablesResidualLabel)
+                if isfinite(s.residual)
+                    app.ResultsTablesResidualLabel.Text = sprintf('Residual: %.3e', s.residual);
                 else
-                    app.ResultsSummaryBottomLabel.Text = sprintf('Summary refreshed | %d streams, %d units', nStreams, nUnits);
+                    app.ResultsTablesResidualLabel.Text = 'Residual: -';
                 end
             end
-        end
-
-        function T = buildSummaryStreamTable(app)
-            cols = {'Name','Flow','T','P'};
-            fs = app.lastFlowsheet;
-            if isempty(fs) || isempty(fs.streamDisplayNames)
-                T = cell2table(cell(0,numel(cols)), 'VariableNames', cols);
-                return;
+            if ~isempty(app.ResultsTablesIterLabel) && isvalid(app.ResultsTablesIterLabel)
+                app.ResultsTablesIterLabel.Text = sprintf('Iterations: %d', s.iterations);
             end
-            n = numel(fs.streamDisplayNames);
-            data = cell(n, numel(cols));
-            flowUnit = app.unitLabel('flow','');
-            tempUnit = app.unitLabel('temperature','');
-            pressUnit = app.unitLabel('pressure','');
-            cols = {sprintf('Name'), sprintf('Flow (%s)', flowUnit), sprintf('T (%s)', tempUnit), sprintf('P (%s)', pressUnit)};
-            for i = 1:n
-                nm = char(string(fs.streamDisplayNames{i}));
-                sref = fs.streamDisplayRefs{i};
-                data{i,1} = nm;
-                data{i,2} = app.formatSpecValue(app.fromSI(sref.n_dot, 'flow'));
-                data{i,3} = app.formatSpecValue(app.fromSI(sref.T, 'temperature'));
-                data{i,4} = app.formatSpecValue(app.fromSI(sref.P, 'pressure'));
-            end
-            T = cell2table(data, 'VariableNames', cols);
-        end
-
-        function T = buildSummaryUnitTable(app)
-            cols = {'Unit','Type','Key Metric','Value'};
-            fs = app.lastFlowsheet;
-            if isempty(fs) || isempty(fs.units)
-                if ~isempty(app.units)
-                    n = numel(app.units);
-                    data = cell(n, numel(cols));
-                    for i = 1:n
-                        data{i,1} = sprintf('U%d', i);
-                        data{i,2} = app.shortTypeName(app.units{i});
-                        data{i,3} = '-';
-                        data{i,4} = '-';
-                    end
-                    T = cell2table(data, 'VariableNames', cols);
-                else
-                    T = cell2table(cell(0,numel(cols)), 'VariableNames', cols);
-                end
-                return;
-            end
-            n = numel(fs.units);
-            data = cell(n, numel(cols));
-            for i = 1:n
-                u = fs.units{i};
-                data{i,1} = sprintf('U%d', i);
-                data{i,2} = app.shortTypeName(u);
-                pairs = app.unitObjectResultPairs(u);
-                if ~isempty(pairs)
-                    data{i,3} = pairs{1,1};
-                    data{i,4} = pairs{1,2};
-                else
-                    data{i,3} = '-';
-                    data{i,4} = '-';
-                end
-            end
-            T = cell2table(data, 'VariableNames', cols);
         end
 
         function exportResultsSummaryCsv(app)
@@ -3207,17 +3088,8 @@ classdef MathLabApp < handle
             if cond, txt = a; else, txt = b; end
         end
 
-        function appendResultsExportLog(app, msg)
-            if isempty(app.ResultsExportStatusArea) || ~isvalid(app.ResultsExportStatusArea)
-                return;
-            end
-            vals = app.ResultsExportStatusArea.Value;
-            if ischar(vals), vals = {vals}; end
-            vals{end+1} = msg;
-            if numel(vals) > 20
-                vals = vals(end-19:end);
-            end
-            app.ResultsExportStatusArea.Value = vals;
+        function appendResultsExportLog(~, ~)
+            % No-op: export log area removed during UI cleanup
         end
 
         function exportResultsBundleCsv(app)
@@ -3657,14 +3529,18 @@ classdef MathLabApp < handle
                 pairs = {app.unitLabel('power','Power'), app.safeMethodValue(u,'getPower','power'); ...
                          'Pressure ratio', app.safePressureRatio(u); ...
                          'Eta', app.safeSimpleProp(u,'eta')};
-            elseif contains(cn,'ConversionReactor') || contains(cn,'YieldReactor') || contains(cn,'Reactor')
-                pairs = {'Conversion', app.safeSimpleProp(u,'conversion'); ...
-                         app.unitLabel('temperature','Tin'), app.safePropValue(u,'inlet','T','temperature'); ...
-                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
             elseif contains(cn,'StoichiometricReactor')
                 pairs = {'Extent', app.safeSimpleProp(u,'extent'); ...
                          'Extent mode', app.safeSimpleProp(u,'extentMode'); ...
                          'Ref species', app.safeSimpleProp(u,'referenceSpecies')};
+            elseif contains(cn,'EquilibriumReactor')
+                pairs = {'Keq', app.safeSimpleProp(u,'Keq'); ...
+                         'Ref species', app.safeSimpleProp(u,'referenceSpecies'); ...
+                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
+            elseif contains(cn,'ConversionReactor') || contains(cn,'YieldReactor') || contains(cn,'Reactor')
+                pairs = {'Conversion', app.safeSimpleProp(u,'conversion'); ...
+                         app.unitLabel('temperature','Tin'), app.safePropValue(u,'inlet','T','temperature'); ...
+                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
             elseif contains(cn,'Separator')
                 pairs = {'Split phi', app.safeSimpleProp(u,'phi')};
             elseif contains(cn,'Purge')
@@ -4113,14 +3989,14 @@ classdef MathLabApp < handle
 
         function T = buildDisplayStreamTable(app)
             if ~isempty(app.lastFlowsheet)
-                T = app.lastFlowsheet.streamTable('showAliasColumn', true);
+                T = app.lastFlowsheet.streamTable();
             else
                 fsTmp = proc.Flowsheet(app.speciesNames);
                 for i = 1:numel(app.streams)
                     s = app.streams{i};
                     fsTmp.addStream(s, char(string(s.name)));
                 end
-                T = fsTmp.streamTable('showAliasColumn', true);
+                T = fsTmp.streamTable();
             end
             T = app.convertDisplayStreamTable(T);
             T.Properties.VariableNames = app.displayColumnNames(T.Properties.VariableNames);
@@ -4322,11 +4198,11 @@ classdef MathLabApp < handle
 
         function dialogSplitter(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Flow Splitter', 620, 250, ...
+            [d, ctrls] = app.makeDialog('Flow Splitter', 620, 250, ...
                 {{'Feed stream:','dropdown',sNames,'Stream to split into multiple outlets.'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Names of outlet streams in split order.'}, ...
-                 {'Specification mode (fractions or flows):','text','fractions','Use "fractions" for split fractions or "flows" for target outlet flowrates.'}, ...
-                 {'Specification values:','text','0.5 0.5','One value per outlet stream, matching the outlet order.'}});
+                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet stream names (e.g. "S2, S3").'}, ...
+                 {'Spec mode:','text','fractions','"fractions" to specify split fractions, or "flows" to specify outlet flowrates.'}, ...
+                 {'Values:','text','0.5 0.5','One value per outlet stream, in the same order.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -4370,11 +4246,11 @@ classdef MathLabApp < handle
         function dialogSource(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
             ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Configure Feed Source', 620, 260, ...
-                {{'Outlet stream:','dropdown',sNames,'Stream created by this source unit.'}, ...
-                 {'Total flow n_dot (NaN = leave free):','numeric',10,'Set overall flowrate or use NaN to skip this specification.'}, ...
-                 {sprintf('Mole fractions y (%d values, NaN to skip):',ns),'text',num2str(nan(1,ns)),'Optional composition vector in species order.'}, ...
-                 {sprintf('Component flows n_i (%d values, NaN to skip):',ns),'text',num2str(nan(1,ns)),'Optional per-species flow values in species order.'}});
+            [d, ctrls] = app.makeDialog('Feed Source', 620, 260, ...
+                {{'Outlet stream:','dropdown',sNames,'Stream receiving the feed conditions.'}, ...
+                 {'Total flow (NaN = not specified):','numeric',10,'Overall molar flowrate. Use NaN to leave unspecified.'}, ...
+                 {sprintf('Mole fractions (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Composition in species order. Use NaN to leave unspecified.'}, ...
+                 {sprintf('Component flows (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Per-species flowrates in species order. Use NaN to leave unspecified.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.outlet.name));
@@ -4396,8 +4272,8 @@ classdef MathLabApp < handle
 
         function dialogSink(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Product Sink', 420, 140, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream consumed by this terminal sink.'}});
+            [d, ctrls] = app.makeDialog('Product Sink', 420, 140, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream consumed by this sink.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx}; ctrls{1}.Value=char(string(u.inlet.name));
             end
@@ -4411,11 +4287,11 @@ classdef MathLabApp < handle
 
         function dialogDesignSpec(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Design Specification', 620, 230, ...
-                {{'Measured stream:','dropdown',sNames,'Stream used to evaluate the design target.'}, ...
-                 {'Target metric:','dropdown',{'total_flow','comp_flow','mole_fraction'},'Quantity that must match the target value.'}, ...
-                 {'Component index (for comp metrics):','numeric',1,'Species index used with comp_flow or mole_fraction.'}, ...
-                 {'Target value:','numeric',0.5,'Desired value for the selected metric.'}});
+            [d, ctrls] = app.makeDialog('Design Specification', 620, 230, ...
+                {{'Stream to measure:','dropdown',sNames,'Stream whose property is evaluated.'}, ...
+                 {'Metric:','dropdown',{'total_flow','comp_flow','mole_fraction'},'Which quantity to track.'}, ...
+                 {'Species index:','numeric',1,'Species index (used with comp_flow or mole_fraction).'}, ...
+                 {'Target value:','numeric',0.5,'Desired value that the metric should reach.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.stream.name)); ctrls{2}.Value=u.metric;
@@ -4432,13 +4308,13 @@ classdef MathLabApp < handle
 
         function dialogAdjust(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Adjust Controller', 640, 280, ...
-                {{'DesignSpec unit index:','numeric',1,'Index of the DesignSpec unit this controller satisfies.'}, ...
-                 {'Manipulated unit index:','numeric',1,'Index of the unit whose parameter will be varied.'}, ...
-                 {'Manipulated field name:','text','beta','Exact unit property name to adjust (for example beta, conversion, duty).'}, ...
-                 {'Field index (NaN for scalar):','numeric',NaN,'Use NaN for scalar fields or an integer for vector entries.'}, ...
-                 {'Minimum allowed value:','numeric',0,'Lower bound for the manipulated value.'}, ...
-                 {'Maximum allowed value:','numeric',1,'Upper bound for the manipulated value.'}});
+            [d, ctrls] = app.makeDialog('Adjust Controller', 640, 280, ...
+                {{'DesignSpec unit index:','numeric',1,'Which DesignSpec unit this controller satisfies.'}, ...
+                 {'Manipulated unit index:','numeric',1,'Which unit''s parameter will be varied.'}, ...
+                 {'Parameter name:','text','beta','Property to adjust (e.g. beta, conversion, duty).'}, ...
+                 {'Parameter index (NaN for scalar):','numeric',NaN,'Use NaN for scalar parameters, or an integer for vector elements.'}, ...
+                 {'Minimum value:','numeric',0,'Lower bound for the adjusted parameter.'}, ...
+                 {'Maximum value:','numeric',1,'Upper bound for the adjusted parameter.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{3}.Value=u.variableField; ctrls{4}.Value=u.variableIndex;
@@ -4462,11 +4338,11 @@ classdef MathLabApp < handle
 
         function dialogCalculator(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Stream Calculator', 700, 310, ...
-                {{'Output stream (LHS):','dropdown',sNames,'Stream receiving the calculated value.'},{'Output field:','dropdown',{'n_dot','T','P'},'Stream property to overwrite with the calculation result.'}, ...
-                 {'Input stream A:','dropdown',sNames,'First input stream in the expression.'},{'Input field A:','dropdown',{'n_dot','T','P'},'Property read from input stream A.'}, ...
-                 {'Operator:','dropdown',{'+' '-' '*' '/'},'Arithmetic operator applied between A and B values.'}, ...
-                 {'Input stream B:','dropdown',sNames,'Second input stream in the expression.'},{'Input field B:','dropdown',{'n_dot','T','P'},'Property read from input stream B.'}});
+            [d, ctrls] = app.makeDialog('Stream Calculator', 700, 310, ...
+                {{'Output stream:','dropdown',sNames,'Stream that receives the result.'},{'Output field:','dropdown',{'n_dot','T','P'},'Which property to set on the output stream.'}, ...
+                 {'Input stream A:','dropdown',sNames,'First input stream.'},{'Field A:','dropdown',{'n_dot','T','P'},'Property to read from stream A.'}, ...
+                 {'Operator:','dropdown',{'+' '-' '*' '/'},'Arithmetic operator: result = A op B.'}, ...
+                 {'Input stream B:','dropdown',sNames,'Second input stream.'},{'Field B:','dropdown',{'n_dot','T','P'},'Property to read from stream B.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.lhsOwner.name)); ctrls{2}.Value=u.lhsField;
@@ -4488,9 +4364,9 @@ classdef MathLabApp < handle
 
         function dialogConstraint(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Fixed Constraint', 600, 230, ...
-                {{'Constrained stream:','dropdown',sNames,'Stream where a value is fixed.'},{'Constrained field:','dropdown',{'n_dot','T','P'},'Property to hold at the specified value.'}, ...
-                 {'Fixed value:','numeric',1,'Target value for the chosen field.'},{'Field index (NaN for scalar):','numeric',NaN,'Use NaN for scalar fields or an integer for vector entries.'}});
+            [d, ctrls] = app.makeDialog('Fixed Constraint', 600, 230, ...
+                {{'Stream:','dropdown',sNames,'Stream to constrain.'},{'Field:','dropdown',{'n_dot','T','P'},'Property to fix at the given value.'}, ...
+                 {'Value:','numeric',1,'Numerical value to enforce.'},{'Index (NaN for scalar):','numeric',NaN,'Use NaN for scalar fields, or an integer for a specific vector element.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.owner.name)); ctrls{2}.Value=u.field;
@@ -4507,8 +4383,8 @@ classdef MathLabApp < handle
 
         function dialogRecycle(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Recycle Connection', 500, 170, ...
-                {{'Recycle source stream:','dropdown',sNames,'Computed stream being recycled.'}, {'Recycle tear stream:','dropdown',sNames,'Tear stream used for recycle convergence.'}});
+            [d, ctrls] = app.makeDialog('Recycle', 500, 170, ...
+                {{'Source stream:','dropdown',sNames,'Computed stream that feeds back.'}, {'Tear stream:','dropdown',sNames,'Tear stream for iterative convergence.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.source.name));
@@ -4524,13 +4400,13 @@ classdef MathLabApp < handle
 
         function dialogBypass(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Bypass Network', 660, 310, ...
-                {{'Feed stream:','dropdown',sNames,'Incoming stream before the bypass split.'}, ...
-                 {'Process-path inlet stream:','dropdown',sNames,'Portion sent through the process path.'}, ...
-                 {'Bypass-path stream:','dropdown',sNames,'Portion bypassing the process path.'}, ...
-                 {'Process return stream:','dropdown',sNames,'Processed stream returning for recombination.'}, ...
-                 {'Combined outlet stream:','dropdown',sNames,'Final mixed outlet after bypass recombination.'}, ...
-                 {'Bypass fraction (0..1):','numeric',0.2,'Fraction of feed sent directly to the bypass path.'}});
+            [d, ctrls] = app.makeDialog('Bypass', 660, 310, ...
+                {{'Feed stream:','dropdown',sNames,'Incoming stream before the split.'}, ...
+                 {'Process inlet:','dropdown',sNames,'Portion sent through the process.'}, ...
+                 {'Bypass stream:','dropdown',sNames,'Portion that skips the process.'}, ...
+                 {'Process return:','dropdown',sNames,'Processed stream returning for mixing.'}, ...
+                 {'Combined outlet:','dropdown',sNames,'Final mixed outlet.'}, ...
+                 {'Bypass fraction (0 to 1):','numeric',0.2,'Fraction of feed sent directly to the bypass.'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 ctrls{1}.Value=char(string(u.inlet.name));
@@ -4555,10 +4431,10 @@ classdef MathLabApp < handle
 
         function dialogManifold(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Configure Routing Manifold', 620, 250, ...
-                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Available inlet streams entering the manifold.'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet streams to be assigned from inlet sources.'}, ...
-                 {'Route vector:','text','1 2','One inlet index per outlet (example: "1 2").'}});
+            [d, ctrls] = app.makeDialog('Routing Manifold', 620, 250, ...
+                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Inlet streams (e.g. "S1, S2").'}, ...
+                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet streams to connect (e.g. "S3, S4").'}, ...
+                 {'Route vector:','text','1 2','One inlet index per outlet (e.g. "1 2" means outlet 1 gets inlet 1, outlet 2 gets inlet 2).'}});
             if ~isempty(editIdx)
                 u=app.units{editIdx};
                 inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
@@ -4638,7 +4514,7 @@ classdef MathLabApp < handle
             app.lastExportPath = outDir;
             solverData = app.lastSolver; %#ok
             if ~isempty(app.lastFlowsheet)
-                streamTable = app.lastFlowsheet.streamTable('showAliasColumn', true); %#ok
+                streamTable = app.lastFlowsheet.streamTable(); %#ok
                 save(filepath, 'solverData', 'streamTable');
             else
                 save(filepath, 'solverData');
@@ -5171,73 +5047,118 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function updateSensDropdowns(app)
+            % --- Output stream / field dropdowns ---
             sNames = app.getStreamNames();
             if isempty(sNames), sNames = {'(none)'}; end
             app.SensOutputStreamDD.Items = sNames;
-
-            uNames = {};
-            for i = 1:numel(app.units)
-                uNames{end+1} = sprintf('[%d] %s', i, app.shortTypeName(app.units{i})); %#ok
-            end
-            if isempty(uNames), uNames = {'(none)'}; end
-            app.SensUnitDropDown.Items = [uNames, sNames];
 
             flds = {'n_dot','T','P'};
             for j = 1:numel(app.speciesNames)
                 flds{end+1} = sprintf('y(%d) [%s]', j, app.speciesNames{j}); %#ok
             end
             app.SensOutputFieldDD.Items = flds;
+
+            % --- Sweep parameter dropdown: auto-discover from units + streams ---
+            paramItems = {};
+
+            % Discover unit parameters
+            for i = 1:numel(app.units)
+                u = app.units{i};
+                uLabel = sprintf('[%d] %s', i, app.shortTypeName(u));
+                paramMap = app.discoverUnitParams(u);
+                keys = paramMap.keys;
+                for k = 1:numel(keys)
+                    paramItems{end+1} = sprintf('Unit %s . %s', uLabel, keys{k}); %#ok
+                end
+            end
+
+            % Discover stream parameters
+            for i = 1:numel(sNames)
+                paramItems{end+1} = sprintf('Stream %s . n_dot', sNames{i}); %#ok
+                paramItems{end+1} = sprintf('Stream %s . T', sNames{i}); %#ok
+                paramItems{end+1} = sprintf('Stream %s . P', sNames{i}); %#ok
+                for j = 1:numel(app.speciesNames)
+                    paramItems{end+1} = sprintf('Stream %s . y(%d) [%s]', sNames{i}, j, app.speciesNames{j}); %#ok
+                end
+            end
+
+            if isempty(paramItems)
+                paramItems = {'(add units or streams first)'};
+            end
+            app.SensParamDropDown.Items = paramItems;
+        end
+
+        function paramMap = discoverUnitParams(~, u)
+            % Returns a containers.Map of sweepable parameter names -> current values
+            % for a given unit object. Only numeric scalar/vector properties are included.
+            paramMap = containers.Map('KeyType','char','ValueType','any');
+            cn = class(u);
+
+            % Common numeric properties to check for each unit type
+            candidates = {};
+            if contains(cn,'Reactor') || contains(cn,'ConversionReactor') || contains(cn,'YieldReactor')
+                candidates = [candidates, {'conversion'}];
+            end
+            if contains(cn,'StoichiometricReactor')
+                candidates = [candidates, {'extent'}];
+            end
+            if contains(cn,'EquilibriumReactor')
+                candidates = [candidates, {'Keq'}];
+            end
+            if contains(cn,'Purge')
+                candidates = [candidates, {'beta'}];
+            end
+            if contains(cn,'Separator')
+                candidates = [candidates, {'phi'}];
+            end
+            if contains(cn,'Splitter')
+                candidates = [candidates, {'splitFractions'}];
+            end
+            if contains(cn,'Bypass')
+                candidates = [candidates, {'bypassFraction'}];
+            end
+            if contains(cn,'Heater') || contains(cn,'Cooler')
+                candidates = [candidates, {'Tout','duty','dP','Pout','PR'}];
+            end
+            if contains(cn,'HeatExchanger')
+                candidates = [candidates, {'Th_out','Tc_out','duty'}];
+            end
+            if contains(cn,'Compressor') || contains(cn,'Turbine')
+                candidates = [candidates, {'Pout','PR','eta'}];
+            end
+
+            for k = 1:numel(candidates)
+                fld = candidates{k};
+                if isprop(u, fld)
+                    try
+                        val = u.(fld);
+                        if isnumeric(val) && ~isempty(val)
+                            if isscalar(val)
+                                paramMap(fld) = val;
+                            else
+                                % For vectors (like phi, splitFractions), add each element
+                                for idx = 1:numel(val)
+                                    paramMap(sprintf('%s(%d)', fld, idx)) = val(idx);
+                                end
+                            end
+                        end
+                    catch
+                    end
+                end
+            end
         end
 
         function onSensParamChanged(app)
-            choice = app.SensParamDropDown.Value;
-            if startsWith(choice, 'Stream')
-                app.SensUnitDropDown.Items = app.getStreamNames();
-            else
-                uNames = {};
-                for i = 1:numel(app.units)
-                    uNames{end+1} = sprintf('[%d] %s', i, app.shortTypeName(app.units{i})); %#ok
-                end
-                if isempty(uNames), uNames = {'(none)'}; end
-                app.SensUnitDropDown.Items = uNames;
-            end
             app.validateSensSelection();
         end
 
         function validateSensSelection(app)
-            % Grey out run button if sweep param is impossible for selected target
-            paramChoice = app.SensParamDropDown.Value;
-            unitSel = app.SensUnitDropDown.Value;
-
-            if strcmp(unitSel, '(none)')
+            choice = app.SensParamDropDown.Value;
+            if contains(choice, '(') && contains(choice, 'first)')
                 app.SensRunBtn.Enable = 'off';
-                app.SensStatusLabel.Text = 'Select a valid target unit/stream.';
+                app.SensStatusLabel.Text = 'Add units or streams, then refresh.';
                 return;
             end
-
-            % Check if param matches unit type
-            tok = regexp(unitSel,'^\[(\d+)\]','tokens');
-            if ~isempty(tok)
-                idx = str2double(tok{1}{1});
-                if idx >= 1 && idx <= numel(app.units)
-                    uType = app.shortTypeName(app.units{idx});
-                    impossible = false;
-                    if contains(paramChoice, 'conversion') && ~strcmp(uType, 'Reactor')
-                        impossible = true;
-                    elseif contains(paramChoice, 'beta') && ~strcmp(uType, 'Purge')
-                        impossible = true;
-                    elseif contains(paramChoice, 'phi') && ~strcmp(uType, 'Separator')
-                        impossible = true;
-                    end
-                    if impossible
-                        app.SensRunBtn.Enable = 'off';
-                        app.SensStatusLabel.Text = sprintf('"%s" not applicable to %s.', ...
-                            paramChoice, uType);
-                        return;
-                    end
-                end
-            end
-
             app.SensRunBtn.Enable = 'on';
             app.SensStatusLabel.Text = '';
         end
@@ -5245,7 +5166,7 @@ classdef MathLabApp < handle
         function runSensitivity(app)
             app.syncStreamsFromTable();
             if isempty(app.streams) || isempty(app.units)
-                uialert(app.Fig,'Build flowsheet first.','Error'); return;
+                uialert(app.Fig,'Add streams and units first.','Error'); return;
             end
 
             paramChoice = app.SensParamDropDown.Value;
@@ -5260,12 +5181,7 @@ classdef MathLabApp < handle
             vals = linspace(vMin, vMax, nPts);
             results = nan(1, nPts);
 
-            unitSel = app.SensUnitDropDown.Value;
-            tok = regexp(unitSel,'^\[(\d+)\]','tokens');
-            unitIdx = [];
-            if ~isempty(tok), unitIdx = str2double(tok{1}{1}); end
-
-            origVal = app.getSensParamValue(paramChoice, unitIdx, unitSel);
+            origVal = app.getSensParamValue(paramChoice);
 
             cla(app.SensAxes);
             app.setStatus('Running sensitivity...');
@@ -5275,7 +5191,7 @@ classdef MathLabApp < handle
 
             for p = 1:nPts
                 try
-                    app.applySensParam(paramChoice, unitIdx, vals(p), unitSel);
+                    app.applySensParam(paramChoice, vals(p));
                     fs = app.buildFlowsheet();
                     fs.solve('maxIter',sensMaxIt,'tolAbs',sensTol,'autoScale',true,'printToConsole',false);
                     results(p) = app.extractOutput(outStreamName, outFieldStr);
@@ -5287,14 +5203,16 @@ classdef MathLabApp < handle
             end
 
             if ~isnan(origVal)
-                app.applySensParam(paramChoice, unitIdx, origVal, unitSel);
+                app.applySensParam(paramChoice, origVal);
             end
 
             app.SensRunBtn.Enable = 'on';
 
+            % Clean label for axes
+            paramLabel = strrep(paramChoice, '_', '\_');
             plot(app.SensAxes, vals, results, '-o', 'LineWidth',1.5, ...
                 'MarkerSize',5, 'Color',[0.2 0.5 0.8]);
-            xlabel(app.SensAxes, strrep(paramChoice,'_','\_'));
+            xlabel(app.SensAxes, paramLabel);
             ylabel(app.SensAxes, sprintf('%s . %s', outStreamName, strrep(outFieldStr,'_','\_')));
             title(app.SensAxes, 'Sensitivity Analysis');
             grid(app.SensAxes, 'on');
@@ -5305,45 +5223,89 @@ classdef MathLabApp < handle
             app.setStatus(statusMsg);
         end
 
-        function applySensParam(app, paramChoice, unitIdx, val, unitSel)
-            if contains(paramChoice, 'conversion')
-                if ~isempty(unitIdx) && unitIdx <= numel(app.units)
-                    app.units{unitIdx}.conversion = val;
+        function [unitIdx, fieldName, vecIdx, streamName] = parseSensParam(~, paramChoice)
+            % Parse a sweep parameter string into its components.
+            % Format: "Unit [i] TypeName . field" or "Unit [i] TypeName . field(j)"
+            %     or: "Stream streamName . field" or "Stream streamName . y(j) [species]"
+            unitIdx = []; fieldName = ''; vecIdx = []; streamName = '';
+
+            % Try unit pattern: "Unit [i] ... . fieldName" or "Unit [i] ... . fieldName(j)"
+            tok = regexp(paramChoice, '^Unit \[(\d+)\].*\.\s*(\w+)(?:\((\d+)\))?', 'tokens');
+            if ~isempty(tok)
+                unitIdx = str2double(tok{1}{1});
+                fieldName = tok{1}{2};
+                if numel(tok{1}) >= 3 && ~isempty(tok{1}{3})
+                    vecIdx = str2double(tok{1}{3});
                 end
-            elseif contains(paramChoice, 'beta')
-                if ~isempty(unitIdx) && unitIdx <= numel(app.units)
-                    app.units{unitIdx}.beta = val;
-                end
-            elseif contains(paramChoice, 'phi')
-                if ~isempty(unitIdx) && unitIdx <= numel(app.units)
-                    app.units{unitIdx}.phi(1) = val;
-                end
-            elseif contains(paramChoice, 'n_dot')
-                s = app.findStream(unitSel);
-                if ~isempty(s), s.n_dot = val; end
-            elseif contains(paramChoice, ' T')
-                s = app.findStream(unitSel);
-                if ~isempty(s), s.T = val; end
-            elseif contains(paramChoice, ' P')
-                s = app.findStream(unitSel);
-                if ~isempty(s), s.P = val; end
+                return;
+            end
+
+            % Try stream pattern: "Stream name . y(j) [species]" or "Stream name . field"
+            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*y\((\d+)\)', 'tokens');
+            if ~isempty(tok)
+                streamName = tok{1}{1};
+                fieldName = 'y';
+                vecIdx = str2double(tok{1}{2});
+                return;
+            end
+            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*(\w+)', 'tokens');
+            if ~isempty(tok)
+                streamName = tok{1}{1};
+                fieldName = tok{1}{2};
+                return;
             end
         end
 
-        function val = getSensParamValue(app, paramChoice, unitIdx, unitSel)
+        function applySensParam(app, paramChoice, val)
+            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
+            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
+                u = app.units{unitIdx};
+                if ~isempty(vecIdx) && isprop(u, fieldName)
+                    v = u.(fieldName);
+                    v(vecIdx) = val;
+                    u.(fieldName) = v;
+                elseif isprop(u, fieldName)
+                    u.(fieldName) = val;
+                end
+            elseif ~isempty(streamName) && ~isempty(fieldName)
+                s = app.findStream(streamName);
+                if ~isempty(s)
+                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
+                        v = s.y;
+                        v(vecIdx) = val;
+                        s.y = v;
+                    elseif isprop(s, fieldName)
+                        s.(fieldName) = val;
+                    end
+                end
+            end
+        end
+
+        function val = getSensParamValue(app, paramChoice)
             val = NaN;
-            if contains(paramChoice,'conversion')
-                if ~isempty(unitIdx)&&unitIdx<=numel(app.units), val=app.units{unitIdx}.conversion; end
-            elseif contains(paramChoice,'beta')
-                if ~isempty(unitIdx)&&unitIdx<=numel(app.units), val=app.units{unitIdx}.beta; end
-            elseif contains(paramChoice,'phi')
-                if ~isempty(unitIdx)&&unitIdx<=numel(app.units), val=app.units{unitIdx}.phi(1); end
-            elseif contains(paramChoice,'n_dot')
-                s=app.findStream(unitSel); if ~isempty(s), val=s.n_dot; end
-            elseif contains(paramChoice,' T')
-                s=app.findStream(unitSel); if ~isempty(s), val=s.T; end
-            elseif contains(paramChoice,' P')
-                s=app.findStream(unitSel); if ~isempty(s), val=s.P; end
+            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
+            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
+                u = app.units{unitIdx};
+                if isprop(u, fieldName)
+                    try
+                        raw = u.(fieldName);
+                        if ~isempty(vecIdx)
+                            val = raw(vecIdx);
+                        else
+                            val = raw;
+                        end
+                    catch
+                    end
+                end
+            elseif ~isempty(streamName) && ~isempty(fieldName)
+                s = app.findStream(streamName);
+                if ~isempty(s)
+                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
+                        val = s.y(vecIdx);
+                    elseif isprop(s, fieldName)
+                        val = s.(fieldName);
+                    end
+                end
             end
         end
 
