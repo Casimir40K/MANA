@@ -257,7 +257,18 @@ classdef MathLabApp < handle
                 'makeDialog', @(titleStr,w,h,fields) app.makeDialog(titleStr,w,h,fields), ...
                 'addDialogButtons', @(d,okFcn) app.addDialogButtons(d,okFcn)));
             app.SolveController = ui.tabs.SolveTabController(app.AppState, struct( ...
-                'runSolve', @() app.runSolverCore()));
+                'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
+                'validateSolvePreconditions', @() app.validateSolvePreconditions(), ...
+                'buildFlowsheet', @() app.buildFlowsheet(), ...
+                'setLastFlowsheet', @(fs) app.setLastFlowsheet(fs), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'getSolveInputs', @() app.getSolveInputs(), ...
+                'prepareSolveRun', @(tol) app.prepareSolveRun(tol), ...
+                'onSolveIter', @(iter,rNorm) app.onSolveIter(iter,rNorm), ...
+                'getDebugSettings', @() app.debugSettings, ...
+                'setLastSolver', @(solver) app.setLastSolver(solver), ...
+                'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
+                'onSolveFailure', @(ME) app.onSolveFailure(ME)));
             app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct());
             app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
                 'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
@@ -2088,31 +2099,29 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = private)
 
-        function runSolver(app)
-            % Temporary wrapper during controller migration.
-            app.syncModelToState();
-            app.SolveController.runSolve();
-            app.syncStateToModel();
-        end
-
-        function runSolverCore(app)
-            app.syncStreamsFromTable();
-
+        function ok = validateSolvePreconditions(app)
+            ok = false;
             if isempty(app.streams)
-                uialert(app.Fig,'No streams.','Error'); return;
+                uialert(app.Fig,'No streams.','Error');
+                return;
             end
             if isempty(app.units)
-                uialert(app.Fig,'No units.','Error'); return;
+                uialert(app.Fig,'No units.','Error');
+                return;
             end
+            ok = true;
+        end
 
-            fs = app.buildFlowsheet();
+        function setLastFlowsheet(app, fs)
             app.lastFlowsheet = fs;
-            app.updateDOF();
+        end
 
+        function [maxIt, tol] = getSolveInputs(app)
             maxIt = app.MaxIterField.Value;
-            tol   = app.TolField.Value;
+            tol = app.TolField.Value;
+        end
 
-            % Prepare real-time plot
+        function hLine = prepareSolveRun(app, tol)
             cla(app.ResidualAxes);
             hLine = animatedline(app.ResidualAxes, 'Color',[0.15 0.50 0.75], ...
                 'LineWidth',1.8, 'Marker','o', 'MarkerSize',3);
@@ -2124,13 +2133,10 @@ classdef MathLabApp < handle
             title(app.ResidualAxes,'Solving...');
 
             app.LogArea.Value = {'Solving...'};
-
-            % Reset metrics bar
             app.SolveIterLabel.Text = 'Iteration: 0';
             app.SolveAvgTimeLabel.Text = 'Avg time/iter: —';
             app.SolveElapsedLabel.Text = 'Elapsed: 00:00';
 
-            % Start elapsed-time clock (updates every 0.25s)
             app.SolveStartTic = tic;
             app.SolveTimer = timer('ExecutionMode','fixedRate', ...
                 'Period', 0.25, 'TimerFcn', @(~,~) app.updateElapsedClock(), ...
@@ -2143,93 +2149,81 @@ classdef MathLabApp < handle
             app.resultsSnapshotIters = [];
             app.resultsSnapshotResiduals = [];
             app.captureResultsSnapshot(0, NaN);
+        end
 
-            % Callback for real-time updates
-            function iterCb(iter, rNorm)
-                addpoints(hLine, iter, rNorm);
-                app.captureResultsSnapshot(iter, rNorm);
-                % Update iteration count & avg time
-                elapsed = toc(app.SolveStartTic);
-                app.SolveIterLabel.Text = sprintf('Iteration: %d', iter);
-                if iter > 0
-                    avgMs = (elapsed / iter) * 1000;
-                    if avgMs >= 1000
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
-                    else
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
-                    end
-                end
-                drawnow limitrate;
-            end
-
-            try
-                dbg = app.debugSettings;
-                solver = fs.solve('maxIter',maxIt,'tolAbs',tol, ...
-                    'autoScale',true, ...
-                    'printToConsole', false, ...
-                    'debugLevel', dbg.debugLevel, ...
-                    'debugTopN', dbg.debugTopN, ...
-                    'debugEvery', dbg.debugEvery, ...
-                    'debugEqNames', dbg.debugEqNames, ...
-                    'iterCallback',@iterCb);
-                app.lastSolver = solver;
-
-                % Stop elapsed clock
-                app.stopSolveTimer();
-
-                % Final metrics update
-                nIter = numel(solver.residualHistory) - 1;
-                elapsed = toc(app.SolveStartTic);
-                app.SolveIterLabel.Text = sprintf('Iteration: %d', nIter);
-                app.updateElapsedClock();
-                if nIter > 0
-                    avgMs = (elapsed / nIter) * 1000;
-                    if avgMs >= 1000
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
-                    else
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
-                    end
-                end
-
-                % Final plot cleanup
-                if solver.converged
-                    title(app.ResidualAxes, ...
-                        sprintf('Converged in %d iterations', nIter));
-                    app.setStatus('Solve completed.');
+        function onSolveIter(app, iter, rNorm)
+            app.captureResultsSnapshot(iter, rNorm);
+            elapsed = toc(app.SolveStartTic);
+            app.SolveIterLabel.Text = sprintf('Iteration: %d', iter);
+            if iter > 0
+                avgMs = (elapsed / iter) * 1000;
+                if avgMs >= 1000
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
                 else
-                    title(app.ResidualAxes, 'NON-CONVERGED');
-                    app.setStatus('Non-converged iterate; balances not satisfied.');
-                end
-
-                app.LogArea.Value = cellstr(solver.logLines);
-
-                app.captureResultsSnapshot(nIter, solver.residualHistory(end));
-                app.refreshResultsSummaryModel();
-
-                app.refreshResultsTable();
-                app.updateStabilityAnalysisTab();
-                app.refreshResultsSummaryPanel();
-                app.refreshResultsTablesTab();
-
-                app.refreshStreamTables();
-
-            catch ME
-                app.stopSolveTimer();
-                app.resultsSummary = struct('status','Solve failed','residual',NaN,'iterations',0, ...
-                    'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
-                app.refreshResultsSummaryPanel();
-                app.refreshResultsTablesTab();
-                title(app.ResidualAxes, 'FAILED');
-                logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
-                    arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
-                app.LogArea.Value = logLines;
-                app.writeErrorLog('solve_error', logLines);
-                if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
-                    app.setStatus('Non-converged iterate; balances not satisfied.');
-                else
-                    app.setStatus('Solve failed — see log (saved to output/logs).');
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
                 end
             end
+        end
+
+        function setLastSolver(app, solver)
+            app.lastSolver = solver;
+        end
+
+        function onSolveSuccess(app, solver)
+            app.stopSolveTimer();
+            nIter = numel(solver.residualHistory) - 1;
+            elapsed = toc(app.SolveStartTic);
+            app.SolveIterLabel.Text = sprintf('Iteration: %d', nIter);
+            app.updateElapsedClock();
+            if nIter > 0
+                avgMs = (elapsed / nIter) * 1000;
+                if avgMs >= 1000
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
+                else
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
+                end
+            end
+
+            if solver.converged
+                title(app.ResidualAxes, sprintf('Converged in %d iterations', nIter));
+                app.setStatus('Solve completed.');
+            else
+                title(app.ResidualAxes, 'NON-CONVERGED');
+                app.setStatus('Non-converged iterate; balances not satisfied.');
+            end
+
+            app.LogArea.Value = cellstr(solver.logLines);
+            app.captureResultsSnapshot(nIter, solver.residualHistory(end));
+            app.refreshResultsSummaryModel();
+            app.refreshResultsTable();
+            app.updateStabilityAnalysisTab();
+            app.refreshResultsSummaryPanel();
+            app.refreshResultsTablesTab();
+            app.refreshStreamTables();
+        end
+
+        function onSolveFailure(app, ME)
+            app.stopSolveTimer();
+            app.resultsSummary = struct('status','Solve failed','residual',NaN,'iterations',0, ...
+                'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
+            app.refreshResultsSummaryPanel();
+            app.refreshResultsTablesTab();
+            title(app.ResidualAxes, 'FAILED');
+            logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
+                arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
+            app.LogArea.Value = logLines;
+            app.writeErrorLog('solve_error', logLines);
+            if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
+                app.setStatus('Non-converged iterate; balances not satisfied.');
+            else
+                app.setStatus('Solve failed — see log (saved to output/logs).');
+            end
+        end
+
+        function runSolver(app)
+            app.syncModelToState();
+            app.SolveController.runSolve();
+            app.syncStateToModel();
         end
 
 
