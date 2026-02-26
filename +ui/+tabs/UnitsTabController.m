@@ -610,5 +610,156 @@ classdef UnitsTabController < handle
                 obj.Services.commitUnit(u,def,editIdx); delete(d);
             end
         end
+
+        function dialogHeater(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Heater', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the heater.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Heated stream leaving the heater.'}, ...
+                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
+                 {sprintf('Thermal value (%s or %s):', obj.Services.unitLabel('temperature','T'), obj.Services.unitLabel('duty','Q')),'numeric',obj.Services.fromSI(400,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
+                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', obj.Services.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                if isfinite(u.Tout), ctrls{3}.Value='Tout'; ctrls{4}.Value=obj.Services.fromSI(u.Tout,'temperature');
+                else, ctrls{3}.Value='duty'; ctrls{4}.Value=obj.Services.fromSI(u.duty,'duty'); end
+                if isprop(u,'dP') && isfinite(u.dP)
+                    ctrls{5}.Value='dP'; ctrls{6}.Value=obj.Services.fromSI(u.dP,'pressure');
+                elseif isprop(u,'Pout') && isfinite(u.Pout)
+                    ctrls{5}.Value='Pout'; ctrls{6}.Value=obj.Services.fromSI(u.Pout,'pressure');
+                elseif isprop(u,'PR') && isfinite(u.PR)
+                    ctrls{5}.Value='PR'; ctrls{6}.Value=u.PR;
+                else
+                    ctrls{5}.Value='pass-through'; ctrls{6}.Value=0;
+                end
+            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='Heater'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                tMode=ctrls{3}.Value; tVal=ctrls{4}.Value;
+                if ~isfinite(tVal), uialert(d,'Thermal value must be finite.','Error'); return; end
+                if strcmp(tMode,'Tout'), def.Tout=obj.Services.toSI(tVal,'temperature'); else, def.duty=obj.Services.toSI(tVal,'duty'); end
+                pMode=ctrls{5}.Value; pVal=ctrls{6}.Value;
+                if ~strcmp(pMode,'pass-through') && ~isfinite(pVal)
+                    uialert(d,'Pressure value must be finite for selected pressure mode.','Error'); return;
+                end
+                if strcmp(pMode,'dP')
+                    def.dP = obj.Services.toSI(pVal,'pressure');
+                elseif strcmp(pMode,'Pout')
+                    prefs = obj.Services.getUnitPrefs();
+                    if pVal <= 0, uialert(d,sprintf('Pout must be > 0 %s.', prefs.pressure),'Error'); return; end
+                    def.Pout = obj.Services.toSI(pVal,'pressure');
+                elseif strcmp(pMode,'PR')
+                    if pVal <= 0, uialert(d,'PR must be > 0.','Error'); return; end
+                    def.PR = pVal;
+                end
+                pCount = double(isfield(def,'dP')) + double(isfield(def,'Pout')) + double(isfield(def,'PR'));
+                if pCount > 1
+                    uialert(d,'Select only one pressure mode (dP, Pout, or PR).','Error'); return;
+                end
+                mix = obj.Services.buildThermoMixForGUI();
+                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
+                args = {};
+                if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
+                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
+                if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
+                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
+                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
+                u=proc.units.Heater(obj.Services.findStream(def.inlet),obj.Services.findStream(def.outlet),mix,args{:});
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogCooler(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Cooler', 620, 280, ...
+                {{'Inlet stream:','dropdown',sNames,'Stream entering the cooler.'}, ...
+                 {'Outlet stream:','dropdown',sNames,'Cooled stream leaving the cooler.'}, ...
+                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
+                 {sprintf('Thermal value (%s or %s):', obj.Services.unitLabel('temperature','T'), obj.Services.unitLabel('duty','Q')),'numeric',obj.Services.fromSI(300,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
+                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
+                 {sprintf('Pressure value (%s or ratio):', obj.Services.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.outlet.name));
+                if isfinite(u.Tout), ctrls{3}.Value='Tout'; ctrls{4}.Value=obj.Services.fromSI(u.Tout,'temperature');
+                else, ctrls{3}.Value='duty'; ctrls{4}.Value=obj.Services.fromSI(u.duty,'duty'); end
+                if isprop(u,'dP') && isfinite(u.dP)
+                    ctrls{5}.Value='dP'; ctrls{6}.Value=obj.Services.fromSI(u.dP,'pressure');
+                elseif isprop(u,'Pout') && isfinite(u.Pout)
+                    ctrls{5}.Value='Pout'; ctrls{6}.Value=obj.Services.fromSI(u.Pout,'pressure');
+                elseif isprop(u,'PR') && isfinite(u.PR)
+                    ctrls{5}.Value='PR'; ctrls{6}.Value=u.PR;
+                else
+                    ctrls{5}.Value='pass-through'; ctrls{6}.Value=0;
+                end
+            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='Cooler'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
+                tMode=ctrls{3}.Value; tVal=ctrls{4}.Value;
+                if ~isfinite(tVal), uialert(d,'Thermal value must be finite.','Error'); return; end
+                if strcmp(tMode,'Tout'), def.Tout=obj.Services.toSI(tVal,'temperature'); else, def.duty=obj.Services.toSI(tVal,'duty'); end
+                pMode=ctrls{5}.Value; pVal=ctrls{6}.Value;
+                if ~strcmp(pMode,'pass-through') && ~isfinite(pVal)
+                    uialert(d,'Pressure value must be finite for selected pressure mode.','Error'); return;
+                end
+                if strcmp(pMode,'dP')
+                    def.dP = obj.Services.toSI(pVal,'pressure');
+                elseif strcmp(pMode,'Pout')
+                    prefs = obj.Services.getUnitPrefs();
+                    if pVal <= 0, uialert(d,sprintf('Pout must be > 0 %s.', prefs.pressure),'Error'); return; end
+                    def.Pout = obj.Services.toSI(pVal,'pressure');
+                elseif strcmp(pMode,'PR')
+                    if pVal <= 0, uialert(d,'PR must be > 0.','Error'); return; end
+                    def.PR = pVal;
+                end
+                pCount = double(isfield(def,'dP')) + double(isfield(def,'Pout')) + double(isfield(def,'PR'));
+                if pCount > 1
+                    uialert(d,'Select only one pressure mode (dP, Pout, or PR).','Error'); return;
+                end
+                mix = obj.Services.buildThermoMixForGUI();
+                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
+                args = {};
+                if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
+                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
+                if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
+                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
+                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
+                u=proc.units.Cooler(obj.Services.findStream(def.inlet),obj.Services.findStream(def.outlet),mix,args{:});
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
+
+        function dialogPurge(obj, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
+            [d, ctrls] = obj.Services.makeDialog('Purge Split', 560, 230, ...
+                {{'Feed stream:','dropdown',sNames,'Stream to split into recycle and purge.'}, ...
+                 {'Recycle stream:','dropdown',sNames,'Stream returned to the loop.'}, ...
+                 {'Purge stream:','dropdown',sNames,'Bleed stream removed from the loop.'}, ...
+                 {'Recycle fraction (0 to 1):','numeric',0.9,'Fraction of feed sent to recycle. Remainder goes to purge.'}});
+            if ~isempty(editIdx)
+                u=obj.State.units{editIdx};
+                ctrls{1}.Value=char(string(u.inlet.name));
+                ctrls{2}.Value=char(string(u.recycle.name));
+                ctrls{3}.Value=char(string(u.purge.name));
+                ctrls{4}.Value=u.beta;
+            elseif numel(sNames)>=3
+                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3};
+            end
+            obj.Services.addDialogButtons(d, @okCb);
+            function okCb()
+                def.type='Purge'; def.inlet=ctrls{1}.Value;
+                def.recycle=ctrls{2}.Value; def.purge=ctrls{3}.Value;
+                def.beta=ctrls{4}.Value;
+                u=proc.units.Purge(obj.Services.findStream(def.inlet),...
+                    obj.Services.findStream(def.recycle),obj.Services.findStream(def.purge),def.beta);
+                obj.Services.commitUnit(u,def,editIdx); delete(d);
+            end
+        end
     end
 end
