@@ -126,30 +126,47 @@ classdef IdealGasMixture < handle
 
         function T = solveT_from_h(obj, h_target, z, T_guess)
             %SOLVET_FROM_H Find T such that h_mix_sensible(T,z) = h_target.
-            %   Uses fzero with bracketing.
+            %   Uses Newton-Raphson (dh/dT = cp) with fzero fallback.
             if nargin < 4, T_guess = 500; end
-            f = @(T) obj.h_mix_sensible(T, z) - h_target;
-
-            % Bracket search
             Tlo = 200; Thi = 4500;
+            T = min(max(T_guess, Tlo), Thi);
+            for iter = 1:50
+                f    = obj.h_mix_sensible(T, z) - h_target;
+                if abs(f) < 1e-3; return; end   % 1e-3 kJ/kmol — far tighter than needed
+                dfdT = obj.cp_mix(T, z);         % dh/dT = cp
+                if abs(dfdT) < 1e-20; break; end
+                T = min(max(T - f/dfdT, Tlo), Thi);
+            end
+            % Fallback: fzero with practical tolerance
+            opts = optimset('TolX', 1e-4, 'Display', 'off');
+            f_fun = @(Tv) obj.h_mix_sensible(Tv, z) - h_target;
             try
-                T = fzero(f, [Tlo, Thi]);
+                T = fzero(f_fun, [Tlo, Thi], opts);
             catch
-                % Fallback: use guess as starting point
-                T = fzero(f, T_guess);
+                T = fzero(f_fun, T_guess, opts);
             end
         end
 
         function T = solveT_isentropic(obj, s_target, P2, z, T_guess)
             %SOLVET_ISENTROPIC Find T2 such that s_mix(T2,P2,z) = s_target.
+            %   Uses Newton-Raphson (ds/dT = cp/T) with fzero fallback.
             if nargin < 5, T_guess = 500; end
-            f = @(T) obj.s_mix(T, P2, z) - s_target;
-
             Tlo = 200; Thi = 4500;
+            T = min(max(T_guess, Tlo), Thi);
+            for iter = 1:50
+                f    = obj.s_mix(T, P2, z) - s_target;
+                if abs(f) < 1e-6; return; end   % 1e-6 kJ/(kmol·K) — far tighter than needed
+                dfdT = obj.cp_mix(T, z) / T;    % ds/dT = cp/T at const P,z
+                if abs(dfdT) < 1e-20; break; end
+                T = min(max(T - f/dfdT, Tlo), Thi);
+            end
+            % Fallback: fzero with practical tolerance
+            opts = optimset('TolX', 1e-4, 'Display', 'off');
+            f_fun = @(Tv) obj.s_mix(Tv, P2, z) - s_target;
             try
-                T = fzero(f, [Tlo, Thi]);
+                T = fzero(f_fun, [Tlo, Thi], opts);
             catch
-                T = fzero(f, T_guess);
+                T = fzero(f_fun, T_guess, opts);
             end
         end
     end
