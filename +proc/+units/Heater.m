@@ -44,10 +44,10 @@ classdef Heater < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
             y_in = obj.inlet.y(:);
             y_out = obj.outlet.y(:);
+            eqs = zeros(ns + 2, 1);
 
             % Residual indices:
             %   1:ns   -> component balances
@@ -56,24 +56,22 @@ classdef Heater < handle
             %
             % Component balances (all species):
             %   n_out*y_out(i) - n_in*y_in(i) = 0
-            for i = 1:ns
-                eqs(end+1) = obj.outlet.n_dot * y_out(i) ...
-                           - obj.inlet.n_dot * y_in(i);
-            end
+            eqs(1:ns) = obj.outlet.n_dot * y_out ...
+                       - obj.inlet.n_dot * y_in;
 
             Pspec = obj.resolvedOutletPressure();
-            eqs(end+1) = obj.outlet.P - Pspec;
+            eqs(ns+1) = obj.outlet.P - Pspec;
 
             z_in = y_in.' / max(sum(y_in), eps);
 
             if isfinite(obj.Tout)
                 % Temperature spec: outlet T must equal Tout
-                eqs(end+1) = obj.outlet.T - obj.Tout;
+                eqs(ns+2) = obj.outlet.T - obj.Tout;
             elseif isfinite(obj.duty)
                 % Duty spec: Q = n_dot * (h_out - h_in)
                 h_in  = obj.thermoMix.h_mix_sensible(obj.inlet.T, z_in);
                 h_out = obj.thermoMix.h_mix_sensible(obj.outlet.T, z_in);
-                eqs(end+1) = obj.duty - obj.inlet.n_dot * (h_out - h_in);
+                eqs(ns+2) = obj.duty - obj.inlet.n_dot * (h_out - h_in);
             else
                 error('Heater: must specify exactly one of Tout or duty.');
             end

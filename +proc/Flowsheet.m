@@ -96,6 +96,8 @@ classdef Flowsheet < handle
 
             if mode == "direct"
                 solver = obj.runSingleSolve(unmatched);
+            elseif mode == "fsolve"
+                solver = obj.runFsolveSolve(unmatched);
             elseif mode == "homotopy"
                 homotopyOpts = struct();
                 homotopyOpts.conversionStart = homotopyConversionStart;
@@ -105,7 +107,7 @@ classdef Flowsheet < handle
                 homotopyOpts.logProgress = homotopyLog;
                 solver = obj.solveWithHomotopy(unmatched, homotopyOpts);
             else
-                error('Unsupported solve mode "%s". Use "direct" or "homotopy".', mode);
+                error('Unsupported solve mode "%s". Use "direct", "fsolve", or "homotopy".', mode);
             end
 
             obj.hasSolveAttempted = true;
@@ -199,6 +201,29 @@ classdef Flowsheet < handle
                 end
             end
             solver.solve();
+        end
+
+        function solver = runFsolveSolve(obj, solverOverrides)
+            % Use MATLAB's fsolve (Optimization Toolbox) as backend.
+            % Falls back to built-in solver if fsolve is unavailable.
+            if isempty(ver('optim'))
+                warning('Flowsheet:NoOptimToolbox', ...
+                    'Optimization Toolbox not found. Falling back to built-in solver.');
+                solver = obj.runSingleSolve(solverOverrides);
+                return
+            end
+
+            % Create ProcessSolver and use its fsolve mode
+            solver = proc.ProcessSolver(obj.streams, obj.units);
+            fields = fieldnames(solverOverrides);
+            for i = 1:numel(fields)
+                name = fields{i};
+                val  = solverOverrides.(name);
+                if isprop(solver, name)
+                    solver.(name) = val;
+                end
+            end
+            solver.solveFsolve();
         end
 
         function solver = solveWithHomotopy(obj, solverOverrides, opts)

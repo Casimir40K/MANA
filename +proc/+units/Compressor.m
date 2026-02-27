@@ -39,14 +39,12 @@ classdef Compressor < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
+            eqs = zeros(ns + 2, 1);
 
             % Component balances: pass-through (no reaction)
-            for i = 1:ns
-                eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(i) ...
-                           - obj.inlet.n_dot * obj.inlet.y(i);
-            end
+            eqs(1:ns) = obj.outlet.n_dot * obj.outlet.y(:) ...
+                       - obj.inlet.n_dot * obj.inlet.y(:);
 
             % Determine outlet pressure
             if isfinite(obj.Pout)
@@ -58,7 +56,7 @@ classdef Compressor < handle
             end
 
             % Pressure equation
-            eqs(end+1) = obj.outlet.P - P2;
+            eqs(ns+1) = obj.outlet.P - P2;
 
             % Isentropic calculation
             z = obj.inlet.y(:)' / max(sum(obj.inlet.y), eps);
@@ -77,7 +75,7 @@ classdef Compressor < handle
 
             % Energy balance: outlet enthalpy must match
             h2_outlet = obj.thermoMix.h_mix_sensible(obj.outlet.T, z);
-            eqs(end+1) = h2_outlet - h2_actual;
+            eqs(ns+2) = h2_outlet - h2_actual;
         end
 
         function labels = equationLabels(obj)

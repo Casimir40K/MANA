@@ -19,24 +19,21 @@ classdef Bypass < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
             b = obj.bypassFraction;
+            eqs = zeros(3*ns, 1);
 
-            % Internal splitter section (component balances)
-            for i = 1:ns
-                eqs(end+1) = obj.processInlet.n_dot * obj.processInlet.y(i) ...
-                          - (1 - b) * obj.inlet.n_dot * obj.inlet.y(i);
-                eqs(end+1) = obj.bypassStream.n_dot * obj.bypassStream.y(i) ...
-                          - b * obj.inlet.n_dot * obj.inlet.y(i);
-            end
+            % Internal splitter section (component balances, interleaved)
+            inFlow = obj.inlet.n_dot * obj.inlet.y(:);
+            eqs(1:2:2*ns-1) = obj.processInlet.n_dot * obj.processInlet.y(:) ...
+                             - (1 - b) * inFlow;
+            eqs(2:2:2*ns)   = obj.bypassStream.n_dot * obj.bypassStream.y(:) ...
+                             - b * inFlow;
 
             % Internal mixer section (component balances)
-            for i = 1:ns
-                eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(i) ...
-                          - (obj.bypassStream.n_dot * obj.bypassStream.y(i) ...
-                           + obj.processReturn.n_dot * obj.processReturn.y(i));
-            end
+            eqs(2*ns+1:3*ns) = obj.outlet.n_dot * obj.outlet.y(:) ...
+                             - (obj.bypassStream.n_dot * obj.bypassStream.y(:) ...
+                              + obj.processReturn.n_dot * obj.processReturn.y(:));
         end
 
         function str = describe(obj)

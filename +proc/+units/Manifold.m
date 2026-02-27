@@ -13,16 +13,15 @@ classdef Manifold < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlets{1}.y);
             nOut = numel(obj.outlets);
+            eqs = zeros(nOut * ns, 1);
 
             for k = 1:nOut
                 src = obj.inlets{obj.route(k)};
                 out = obj.outlets{k};
-                for i = 1:ns
-                    eqs(end+1) = out.n_dot * out.y(i) - src.n_dot * src.y(i);
-                end
+                idx = (k-1)*ns + (1:ns);
+                eqs(idx) = out.n_dot * out.y(:) - src.n_dot * src.y(:);
             end
         end
 

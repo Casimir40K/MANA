@@ -11,13 +11,12 @@ classdef Link < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
-            for i = 1:numel(obj.inlet.y)
-                eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(i) ...
-                          - obj.inlet.n_dot * obj.inlet.y(i);
-            end
-            eqs(end+1) = obj.outlet.T - obj.inlet.T;
-            eqs(end+1) = obj.outlet.P - obj.inlet.P;
+            ns = numel(obj.inlet.y);
+            eqs = zeros(ns + 2, 1);
+            eqs(1:ns) = obj.outlet.n_dot * obj.outlet.y(:) ...
+                      - obj.inlet.n_dot * obj.inlet.y(:);
+            eqs(ns+1) = obj.outlet.T - obj.inlet.T;
+            eqs(ns+2) = obj.outlet.P - obj.inlet.P;
         end
 
         function str = describe(obj)

@@ -11,9 +11,8 @@ classdef Mixer < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
-        
             nspecies = length(obj.outlet.y);
+            eqs = zeros(nspecies + 2, 1);
 
             % Component molar-flow balances for every species.
             %
@@ -24,17 +23,15 @@ classdef Mixer < handle
             % (typically the dominant recycle/product component), which can
             % otherwise leave the worst mismatch unrepresented and stall
             % convergence with mixer-dominated residuals.
-            for j = 1:nspecies
-                total_species_in = 0;
-                for i = 1:length(obj.inlets)
-                    total_species_in = total_species_in + obj.inlets{i}.n_dot * obj.inlets{i}.y(j);
-                end
-                eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(j) - total_species_in;
+            total_species_in = zeros(nspecies, 1);
+            for i = 1:length(obj.inlets)
+                total_species_in = total_species_in + obj.inlets{i}.n_dot * obj.inlets{i}.y(:);
             end
-        
+            eqs(1:nspecies) = obj.outlet.n_dot * obj.outlet.y(:) - total_species_in;
+
             % Mechanical/thermal closure: match first inlet (adiabatic/isobaric assumption)
-            eqs(end+1) = obj.outlet.T - obj.inlets{1}.T;
-            eqs(end+1) = obj.outlet.P - obj.inlets{1}.P;
+            eqs(nspecies+1) = obj.outlet.T - obj.inlets{1}.T;
+            eqs(nspecies+2) = obj.outlet.P - obj.inlets{1}.P;
         end
 
         function labels = equationLabels(obj)

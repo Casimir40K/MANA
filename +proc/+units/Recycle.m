@@ -11,11 +11,10 @@ classdef Recycle < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
-            for i = 1:numel(obj.source.y)
-                eqs(end+1) = obj.tear.n_dot * obj.tear.y(i) ...
-                          - obj.source.n_dot * obj.source.y(i);
-            end
+            ns = numel(obj.source.y);
+            eqs = zeros(ns, 1);
+            eqs(1:ns) = obj.tear.n_dot * obj.tear.y(:) ...
+                      - obj.source.n_dot * obj.source.y(:);
         end
 
         function str = describe(obj)

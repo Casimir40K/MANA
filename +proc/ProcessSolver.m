@@ -94,6 +94,11 @@ classdef ProcessSolver < handle
         % logCallback(line, lineNumber).
         logCallback = []    % function_handle or empty
 
+        % Parallel Computing Toolbox: enable parallel FD Jacobian
+        % Set to true to use parfor when the Parallel Computing Toolbox
+        % is available. Falls back to serial execution transparently.
+        useParallel logical = false
+
         % Hidden debug controls (off by default)
         debug logical = false
         debugLevel double = 2
@@ -111,6 +116,30 @@ classdef ProcessSolver < handle
         map
         zMin
         zMax
+
+        % Cached equation structure (populated at solve start)
+        eqCounts double = []      % number of equations per unit
+        eqOffsets double = []     % cumulative offset per unit
+        totalEqs double = 0       % total number of equations
+
+        % Pre-computed unpack index maps (populated at packUnknowns)
+        unpackZ struct = struct('xIdx',{},'sIdx',{})
+        unpackA struct = struct('xIdx',{},'sIdx',{},'comp',{})
+        unpackT struct = struct('xIdx',{},'sIdx',{})
+        unpackP struct = struct('xIdx',{},'sIdx',{})
+        unpackU struct = struct('xIdx',{},'owner',{},'field',{},'sub',{},'lb',{},'ub',{})
+
+        % Equation type classification for fast weight building
+        eqTypes double = []       % 0=default,1=flow,2=temperature,3=pressure
+
+        % Parallel toolbox availability (checked once)
+        hasParallelToolbox logical = false
+        parallelChecked logical = false
+
+        % Jacobian sparsity (populated on first FD build)
+        sparsityPattern logical = []
+        columnColors double = []
+        nColors double = 0
     end
 
     methods
@@ -130,16 +159,34 @@ classdef ProcessSolver < handle
             obj.applySolverSettingsStruct();
             dbg = obj.resolveDebugOptions();
 
+            % Reset sparsity (re-detected on first Jacobian build)
+            obj.sparsityPattern = [];
+            obj.columnColors = [];
+            obj.nColors = 0;
+
+            % Check for Parallel Computing Toolbox (once per solver lifetime)
+            if ~obj.parallelChecked
+                obj.hasParallelToolbox = ~isempty(ver('parallel'));
+                obj.parallelChecked = true;
+            end
+            if obj.useParallel && obj.hasParallelToolbox
+                obj.log('Parallel FD Jacobian enabled (Parallel Computing Toolbox detected).');
+            elseif obj.useParallel && ~obj.hasParallelToolbox
+                obj.log('Parallel FD Jacobian requested but Parallel Computing Toolbox not found. Using serial execution.');
+            end
+
             obj.converged = false;
             obj.exitFlag = "running";
             obj.finalResidual = NaN;
             obj.finalWeightedResidual = NaN;
 
+            histAlloc = obj.maxIter + 2;
             obj.logLines = strings(0,1);
-            obj.residualHistory = [];
-            obj.weightedResidualHistory = [];
-            obj.stepHistory     = [];
-            obj.alphaHistory    = [];
+            obj.residualHistory = nan(1, histAlloc);
+            obj.weightedResidualHistory = nan(1, histAlloc);
+            obj.stepHistory     = nan(1, histAlloc);
+            obj.alphaHistory    = nan(1, histAlloc);
+            histIdx = 0;
 
             obj.residualEvalCount = 0;
 
@@ -161,6 +208,18 @@ classdef ProcessSolver < handle
 
                 stage = "pack_unknowns";
                 [x, obj.map] = obj.packUnknowns();
+                obj.buildUnpackMaps();
+
+                % Cache equation counts per unit (avoids dynamic array growth in tryResiduals)
+                stage = "cache_equation_structure";
+                nU = numel(obj.units);
+                obj.eqCounts = zeros(nU, 1);
+                for u = 1:nU
+                    obj.eqCounts(u) = numel(obj.units{u}.equations());
+                end
+                obj.eqOffsets = [0; cumsum(obj.eqCounts)];
+                obj.totalEqs = obj.eqOffsets(end);
+
                 eqNames = obj.buildEquationLabels();
 
                 stage = "preflight_spec_conflicts";
@@ -199,10 +258,11 @@ classdef ProcessSolver < handle
                 end
                 r0u = norm(r);
                 r0w = norm(w .* r);
-                obj.residualHistory(end+1) = r0u;
-                obj.weightedResidualHistory(end+1) = r0w;
-                obj.stepHistory(end+1)     = NaN;
-                obj.alphaHistory(end+1)    = NaN;
+                histIdx = histIdx + 1;
+                obj.residualHistory(histIdx) = r0u;
+                obj.weightedResidualHistory(histIdx) = r0w;
+                obj.stepHistory(histIdx)     = NaN;
+                obj.alphaHistory(histIdx)    = NaN;
 
                 obj.log('Initial ||r|| = %.6e, ||W*r|| = %.6e (unknowns=%d, eqs=%d)', r0u, r0w, numel(x), numel(r));
 
@@ -228,10 +288,11 @@ classdef ProcessSolver < handle
                         rnConv = rnW;
                     end
                     if rnConv < obj.tolAbs
-                        obj.residualHistory(end+1) = rnU;
-                        obj.weightedResidualHistory(end+1) = rnW;
-                        obj.stepHistory(end+1)     = 0;
-                        obj.alphaHistory(end+1)    = 0;
+                        histIdx = histIdx + 1;
+                        obj.residualHistory(histIdx) = rnU;
+                        obj.weightedResidualHistory(histIdx) = rnW;
+                        obj.stepHistory(histIdx)     = 0;
+                        obj.alphaHistory(histIdx)    = 0;
                         obj.converged = true;
                         obj.exitFlag = "converged";
                         obj.finalResidual = rnU;
@@ -322,10 +383,11 @@ classdef ProcessSolver < handle
                     end
 
                     % Record history
-                    obj.residualHistory(end+1) = rnU;
-                    obj.weightedResidualHistory(end+1) = rnW;
-                    obj.stepHistory(end+1)     = norm(dx);
-                    obj.alphaHistory(end+1)    = alpha;
+                    histIdx = histIdx + 1;
+                    obj.residualHistory(histIdx) = rnU;
+                    obj.weightedResidualHistory(histIdx) = rnW;
+                    obj.stepHistory(histIdx)     = norm(dx);
+                    obj.alphaHistory(histIdx)    = alpha;
 
                     relRnU = rnU / max(r0u, eps);
                     relRnW = rnW / max(r0w, eps);
@@ -352,10 +414,11 @@ classdef ProcessSolver < handle
                         obj.exitFlag = "max_iter_nonconverged";
                         obj.finalResidual = finalR;
                         obj.finalWeightedResidual = finalRW;
-                        obj.residualHistory(end+1) = finalR;
-                        obj.weightedResidualHistory(end+1) = finalRW;
-                        obj.stepHistory(end+1) = NaN;
-                        obj.alphaHistory(end+1) = NaN;
+                        histIdx = histIdx + 1;
+                        obj.residualHistory(histIdx) = finalR;
+                        obj.weightedResidualHistory(histIdx) = finalRW;
+                        obj.stepHistory(histIdx) = NaN;
+                        obj.alphaHistory(histIdx) = NaN;
                         obj.log('Max iterations reached: non-converged iterate; balances not satisfied. Final ||r||=%.6e, ||W*r||=%.6e (resEvals=%d)', finalR, finalRW, obj.residualEvalCount);
                         if obj.useWeightedNormForConvergence
                             obj.fireCallback(k+1, finalRW);
@@ -371,6 +434,12 @@ classdef ProcessSolver < handle
                     end
                 end
 
+                % Trim pre-allocated history arrays
+                obj.residualHistory = obj.residualHistory(1:histIdx);
+                obj.weightedResidualHistory = obj.weightedResidualHistory(1:histIdx);
+                obj.stepHistory = obj.stepHistory(1:histIdx);
+                obj.alphaHistory = obj.alphaHistory(1:histIdx);
+
                 stage = "post_iteration_diagnostics";
                 if dbg.level >= 2
                     obj.debugPrintTopResiduals(r, dbg, eqNames, 'solver exit');
@@ -385,6 +454,12 @@ classdef ProcessSolver < handle
                 obj.unpackUnknowns(x);
 
             catch ME
+                % Trim pre-allocated history arrays on error
+                obj.residualHistory = obj.residualHistory(1:max(histIdx,0));
+                obj.weightedResidualHistory = obj.weightedResidualHistory(1:max(histIdx,0));
+                obj.stepHistory = obj.stepHistory(1:max(histIdx,0));
+                obj.alphaHistory = obj.alphaHistory(1:max(histIdx,0));
+
                 obj.converged = false;
                 obj.exitFlag = "error";
                 if ~isempty(r)
@@ -460,9 +535,86 @@ classdef ProcessSolver < handle
             S.nEquations = numel(r);
             S.map = map;
         end
+
+        function solveFsolve(obj)
+            %SOLVEFSOLVE Solve using MATLAB's fsolve (Optimization Toolbox).
+            %   Uses the sparsity pattern for efficient Jacobian computation.
+            %   Requires the Optimization Toolbox.
+            obj.applySolverSettingsStruct();
+            obj.converged = false;
+            obj.exitFlag = "running";
+            obj.finalResidual = NaN;
+            obj.finalWeightedResidual = NaN;
+            obj.logLines = strings(0,1);
+            obj.residualHistory = [];
+            obj.weightedResidualHistory = [];
+            obj.stepHistory = [];
+            obj.alphaHistory = [];
+            obj.residualEvalCount = 0;
+
+            obj.configureNormalizationConstraints();
+            [x0, obj.map] = obj.packUnknowns();
+            obj.buildUnpackMaps();
+
+            % Cache equation counts
+            nU = numel(obj.units);
+            obj.eqCounts = zeros(nU, 1);
+            for u = 1:nU
+                obj.eqCounts(u) = numel(obj.units{u}.equations());
+            end
+            obj.eqOffsets = [0; cumsum(obj.eqCounts)];
+            obj.totalEqs = obj.eqOffsets(end);
+
+            obj.log('fsolve backend: %d unknowns, %d equations', numel(x0), obj.totalEqs);
+
+            % Build sparsity pattern for fsolve JacobianPattern
+            [r0, ~] = obj.tryResiduals(x0);
+            n = numel(x0); m = numel(r0);
+            sp = false(m, n);
+            for k = 1:n
+                step = obj.fdEps * max(1, abs(x0(k)));
+                x2 = x0; x2(k) = x2(k) + step;
+                [r2, ok] = obj.tryResiduals(x2);
+                if ok
+                    sp(:, k) = abs(r2 - r0) > 1e-14 * max(1, abs(r0));
+                else
+                    sp(:, k) = true;
+                end
+            end
+            obj.log('fsolve sparsity: nnz=%.1f%%', 100 * nnz(sp) / (m*n));
+
+            opts = optimoptions('fsolve', ...
+                'Display', 'iter', ...
+                'MaxIterations', obj.maxIter, ...
+                'FunctionTolerance', obj.tolAbs, ...
+                'StepTolerance', 1e-12, ...
+                'JacobianPattern', sparse(sp), ...
+                'SpecifyObjectiveGradient', false);
+
+            resFun = @(x) obj.tryResidualsValueOnly(x);
+            [xSol, ~, exitflag] = fsolve(resFun, x0, opts);
+
+            obj.unpackUnknowns(xSol);
+            [rFinal, ~] = obj.tryResiduals(xSol);
+            obj.finalResidual = norm(rFinal);
+            obj.finalWeightedResidual = obj.finalResidual;
+            obj.converged = (exitflag > 0) && obj.finalResidual < obj.tolAbs * 100;
+            if obj.converged
+                obj.exitFlag = "converged";
+                obj.log('fsolve converged: ||r||=%.6e', obj.finalResidual);
+            else
+                obj.exitFlag = sprintf("fsolve_exit_%d", exitflag);
+                obj.log('fsolve exit %d: ||r||=%.6e', exitflag, obj.finalResidual);
+            end
+        end
     end
 
     methods (Access = private)
+        function r = tryResidualsValueOnly(obj, x)
+            % Wrapper that returns only the residual vector (no ok flag).
+            % Required for fsolve function handle interface.
+            [r, ~] = obj.tryResiduals(x);
+        end
         function applySolverSettingsStruct(obj)
             if isempty(obj.solverSettings) || ~isstruct(obj.solverSettings)
                 return
@@ -503,11 +655,13 @@ classdef ProcessSolver < handle
                 return
             end
 
-            n = size(Jcand,2);
+            % Cheap quality check: verify the updated Jacobian can produce
+            % a finite linear solve. Avoids the O(n^3) rcond computation.
+            n = size(Jcand, 2);
             JTJ = Jcand.' * Jcand;
-            lambda = 1e-12 * max(1, trace(JTJ) / max(1,n));
-            rc = rcond(JTJ + lambda * eye(n));
-            if ~isfinite(rc) || rc < obj.broydenMinRcond
+            lambda = 1e-12 * max(1, trace(JTJ) / max(1, n));
+            dxTest = (JTJ + lambda * eye(n)) \ (Jcand.' * y);
+            if ~all(isfinite(dxTest))
                 return
             end
 
@@ -546,10 +700,20 @@ classdef ProcessSolver < handle
         function [r, ok] = tryResiduals(obj, x)
             obj.residualEvalCount = obj.residualEvalCount + 1;
             obj.unpackUnknowns(x);
-            r = [];
-            for u = 1:numel(obj.units)
-                ru = obj.units{u}.equations();
-                r  = [r; ru(:)];
+            if obj.totalEqs > 0
+                % Pre-allocated path: fill by index (no dynamic growth)
+                r = zeros(obj.totalEqs, 1);
+                for u = 1:numel(obj.units)
+                    ru = obj.units{u}.equations();
+                    r(obj.eqOffsets(u)+1 : obj.eqOffsets(u)+numel(ru)) = ru(:);
+                end
+            else
+                % Fallback for first call before caching
+                r = [];
+                for u = 1:numel(obj.units)
+                    ru = obj.units{u}.equations();
+                    r = [r; ru(:)]; %#ok<AGROW>
+                end
             end
             ok = all(isfinite(r));
         end
@@ -617,10 +781,15 @@ classdef ProcessSolver < handle
 
         function eqNames = buildEquationLabels(obj)
             eqNames = strings(0,1);
+            types = zeros(0,1);  % 0=default, 1=flow, 2=temperature, 3=pressure
             for u = 1:numel(obj.units)
                 unit = obj.units{u};
-                unitResiduals = unit.equations();
-                nEq = numel(unitResiduals);
+                % Use cached equation count instead of calling equations() again
+                if ~isempty(obj.eqCounts) && u <= numel(obj.eqCounts)
+                    nEq = obj.eqCounts(u);
+                else
+                    nEq = numel(unit.equations());
+                end
 
                 labels = strings(nEq,1);
                 if ismethod(unit, 'equationLabels')
@@ -644,23 +813,61 @@ classdef ProcessSolver < handle
                     end
                 end
 
+                localTypes = zeros(nEq, 1);
                 for i = 1:nEq
                     if strlength(labels(i)) == 0
                         labels(i) = sprintf('%s: eq %d', char(unitName), i);
                     end
+                    % Classify equation type from label (done once, not per-weight-build)
+                    lbl = lower(char(labels(i)));
+                    if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
+                        localTypes(i) = 3;
+                    elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
+                        localTypes(i) = 2;
+                    elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
+                        localTypes(i) = 1;
+                    end
                 end
-                eqNames = [eqNames; labels(:)];
+                eqNames = [eqNames; labels(:)]; %#ok<AGROW>
+                types = [types; localTypes(:)]; %#ok<AGROW>
             end
+            obj.eqTypes = types;
         end
 
         function J = fdJacobianSafe(obj, x, r0)
             n = numel(x); m = numel(r0);
-            J = zeros(m,n);
-            for k = 1:n
-                step = obj.fdEps * max(1, abs(x(k)));
-                doCentral = obj.useCentralDifferenceForColumn(k);
 
-                if doCentral
+            % Detect sparsity pattern on first call and compute column coloring
+            if isempty(obj.sparsityPattern)
+                obj.detectSparsityPattern(x, r0);
+            end
+
+            % Use graph-coloring compressed FD if coloring is available
+            if obj.nColors > 0 && obj.nColors < n
+                J = obj.fdJacobianCompressed(x, r0);
+                return
+            end
+
+            % Fallback: standard column-by-column FD
+            J = obj.fdJacobianColumnwise(x, r0);
+        end
+
+        function J = fdJacobianColumnwise(obj, x, r0)
+            n = numel(x); m = numel(r0);
+            J = zeros(m,n);
+
+            % Pre-compute steps and central-difference flags
+            steps = zeros(n, 1);
+            isCentral = false(n, 1);
+            for k = 1:n
+                steps(k) = obj.fdStepForColumn(k, x(k));
+                isCentral(k) = obj.useCentralDifferenceForColumn(k);
+            end
+
+            % Serial path (standard)
+            for k = 1:n
+                step = steps(k);
+                if isCentral(k)
                     xPlus = x;
                     xMinus = x;
                     xPlus(k) = xPlus(k) + step;
@@ -687,6 +894,127 @@ classdef ProcessSolver < handle
                         J(:,k) = (r2 - r0) / step;
                     end
                 end
+            end
+        end
+
+        function J = fdJacobianCompressed(obj, x, r0)
+            % Graph-coloring compressed finite differences.
+            % Columns with non-overlapping sparsity patterns share the same
+            % perturbation, reducing residual evaluations from n to nColors.
+            n = numel(x); m = numel(r0);
+            J = zeros(m, n);
+
+            for c = 1:obj.nColors
+                cols = find(obj.columnColors == c);
+                if isempty(cols), continue; end
+
+                % Compute per-column steps
+                steps = zeros(numel(cols), 1);
+                for j = 1:numel(cols)
+                    steps(j) = obj.fdStepForColumn(cols(j), x(cols(j)));
+                end
+
+                % Perturb all same-color columns simultaneously
+                xPert = x;
+                for j = 1:numel(cols)
+                    xPert(cols(j)) = xPert(cols(j)) + steps(j);
+                end
+
+                [rPert, okPert] = obj.tryResiduals(xPert);
+                if ~okPert
+                    % Fall back to column-by-column for this color group
+                    for j = 1:numel(cols)
+                        k = cols(j);
+                        x2 = x;
+                        x2(k) = x2(k) + steps(j);
+                        [r2, ok] = obj.tryResiduals(x2);
+                        if ok
+                            rows = obj.sparsityPattern(:, k);
+                            J(rows, k) = (r2(rows) - r0(rows)) / steps(j);
+                        end
+                    end
+                    continue
+                end
+
+                % Extract columns from compressed perturbation
+                for j = 1:numel(cols)
+                    k = cols(j);
+                    rows = obj.sparsityPattern(:, k);
+                    J(rows, k) = (rPert(rows) - r0(rows)) / steps(j);
+                end
+            end
+        end
+
+        function step = fdStepForColumn(obj, colIdx, xVal)
+            % Adaptive FD step sizing based on variable type (B6)
+            if colIdx <= numel(obj.map)
+                varType = obj.map(colIdx).var;
+            else
+                varType = '?';
+            end
+            switch varType
+                case 'a'
+                    % Composition logits: larger relative step for better sensitivity
+                    step = 1e-6 * max(1, abs(xVal));
+                case 'T'
+                    step = obj.fdEps * max(1, abs(xVal));
+                case 'P'
+                    step = obj.fdEps * max(1, abs(xVal));
+                otherwise
+                    step = obj.fdEps * max(1, abs(xVal));
+            end
+        end
+
+        function detectSparsityPattern(obj, x, r0)
+            % Detect Jacobian sparsity by probing each column and recording
+            % which rows change. Then compute greedy column coloring.
+            n = numel(x); m = numel(r0);
+            sp = false(m, n);
+            dropTol = 1e-14;
+
+            for k = 1:n
+                step = obj.fdStepForColumn(k, x(k));
+                x2 = x;
+                x2(k) = x2(k) + step;
+                [r2, ok] = obj.tryResiduals(x2);
+                if ok
+                    sp(:, k) = abs(r2 - r0) > dropTol * max(1, abs(r0));
+                else
+                    sp(:, k) = true;  % conservative: assume dense column
+                end
+            end
+
+            obj.sparsityPattern = sp;
+
+            % Greedy distance-2 column coloring
+            obj.columnColors = obj.greedyColumnColoring(sp);
+            obj.nColors = max(obj.columnColors);
+            nnzFrac = nnz(sp) / (m * n);
+            obj.log('Jacobian sparsity: %d x %d, nnz=%.1f%%, %d colors (vs %d columns, %.1fx compression)', ...
+                m, n, nnzFrac*100, obj.nColors, n, n / max(obj.nColors, 1));
+        end
+
+        function colors = greedyColumnColoring(~, sp)
+            % Greedy distance-2 column coloring for compressed FD.
+            % Two columns conflict if they share any nonzero row.
+            n = size(sp, 2);
+            colors = zeros(n, 1);
+            for k = 1:n
+                rowsK = sp(:, k);
+                % Find columns that conflict with k (share a nonzero row)
+                conflictColors = zeros(0, 1);
+                for j = 1:k-1
+                    if colors(j) > 0 && any(rowsK & sp(:, j))
+                        conflictColors(end+1) = colors(j); %#ok<AGROW>
+                    end
+                end
+                % Assign smallest unused color
+                c = 1;
+                usedColors = unique(conflictColors);
+                while any(c == usedColors)
+                    c = c + 1;
+                end
+                colors(k) = c;
             end
         end
 
@@ -776,10 +1104,10 @@ classdef ProcessSolver < handle
             elseif obj.autoScale && nargin >= 4 && ~isempty(r0)
                 % Derive per-equation weights from initial residual
                 % magnitudes so that all equations contribute equally.
-                w = ones(nEq, 1);
-                for i = 1:nEq
-                    mag = abs(r0(min(i, numel(r0))));
-                    w(i) = 1 / max(mag, obj.autoScaleMinMagnitude);
+                mag = abs(r0(1:min(nEq, numel(r0))));
+                w = 1 ./ max(mag, obj.autoScaleMinMagnitude);
+                if numel(w) < nEq
+                    w(end+1:nEq) = 1;
                 end
 
                 % Cap dynamic range so one tiny initial residual cannot
@@ -789,15 +1117,26 @@ classdef ProcessSolver < handle
                 wMax = wMin * max(1, obj.autoScaleMaxWeightFactor);
                 w = min(w, wMax);
             else
+                % Use pre-classified equation types for fast weight assignment
                 w = ones(nEq,1) / max(obj.defaultResidualScale, eps);
-                for i = 1:nEq
-                    lbl = lower(char(eqNames(min(i, numel(eqNames)))));
-                    if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
-                        w(i) = 1 / max(obj.pressureResidualScale, eps);
-                    elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
-                        w(i) = 1 / max(obj.temperatureResidualScale, eps);
-                    elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
-                        w(i) = 1 / max(obj.flowResidualScale, eps);
+                if ~isempty(obj.eqTypes) && numel(obj.eqTypes) == nEq
+                    wFlow = 1 / max(obj.flowResidualScale, eps);
+                    wTemp = 1 / max(obj.temperatureResidualScale, eps);
+                    wPres = 1 / max(obj.pressureResidualScale, eps);
+                    w(obj.eqTypes == 1) = wFlow;
+                    w(obj.eqTypes == 2) = wTemp;
+                    w(obj.eqTypes == 3) = wPres;
+                else
+                    % Fallback: string matching (slow path)
+                    for i = 1:nEq
+                        lbl = lower(char(eqNames(min(i, numel(eqNames)))));
+                        if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
+                            w(i) = 1 / max(obj.pressureResidualScale, eps);
+                        elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
+                            w(i) = 1 / max(obj.temperatureResidualScale, eps);
+                        elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
+                            w(i) = 1 / max(obj.flowResidualScale, eps);
+                        end
                     end
                 end
             end
@@ -868,38 +1207,73 @@ classdef ProcessSolver < handle
             end
         end
 
-        function unpackUnknowns(obj, x)
-            z = nan(numel(obj.streams),1);
-            a = nan(numel(obj.streams), obj.ns);
-            for k = 1:numel(obj.map)
-                si=obj.map(k).streamIndex; var=obj.map(k).var; sub=obj.map(k).subIndex;
-                switch var
-                    case 'z', z(si) = x(k);
-                    case 'a', a(si,sub) = x(k);
-                    case 'T', obj.streams{si}.T = x(k);
-                    case 'P', obj.streams{si}.P = x(k);
+        function buildUnpackMaps(obj)
+            % Pre-compute typed index maps for fast unpackUnknowns.
+            % Called once after packUnknowns.
+            nMap = numel(obj.map);
+            obj.unpackZ = struct('xIdx',{},'sIdx',{});
+            obj.unpackA = struct('xIdx',{},'sIdx',{},'comp',{});
+            obj.unpackT = struct('xIdx',{},'sIdx',{});
+            obj.unpackP = struct('xIdx',{},'sIdx',{});
+            obj.unpackU = struct('xIdx',{},'owner',{},'field',{},'sub',{},'lb',{},'ub',{});
+            for k = 1:nMap
+                m = obj.map(k);
+                switch m.var
+                    case 'z'
+                        obj.unpackZ(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
+                    case 'a'
+                        obj.unpackA(end+1) = struct('xIdx',k,'sIdx',m.streamIndex,'comp',m.subIndex);
+                    case 'T'
+                        obj.unpackT(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
+                    case 'P'
+                        obj.unpackP(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
                     case 'u'
-                        xi = min(max(x(k), obj.map(k).bounds(1)), obj.map(k).bounds(2));
-                        owner = obj.map(k).owner;
-                        field = obj.map(k).field;
-                        if ~isprop(owner, field)
-                            error('Unknown manipulated field "%s" on %s.', field, class(owner));
-                        end
-                        if isnan(sub)
-                            owner.(field) = xi;
-                        else
-                            arr = owner.(field);
-                            arr(sub) = xi;
-                            owner.(field) = arr;
-                        end
+                        obj.unpackU(end+1) = struct('xIdx',k,'owner',m.owner,'field',m.field,...
+                            'sub',m.subIndex,'lb',m.bounds(1),'ub',m.bounds(2));
                 end
             end
-            for si = 1:numel(obj.streams)
+        end
+
+        function unpackUnknowns(obj, x)
+            nS = numel(obj.streams);
+            z = nan(nS,1);
+            a = nan(nS, obj.ns);
+
+            % Typed index maps: direct indexing without switch per entry
+            for i = 1:numel(obj.unpackZ)
+                m = obj.unpackZ(i);
+                z(m.sIdx) = x(m.xIdx);
+            end
+            for i = 1:numel(obj.unpackA)
+                m = obj.unpackA(i);
+                a(m.sIdx, m.comp) = x(m.xIdx);
+            end
+            for i = 1:numel(obj.unpackT)
+                m = obj.unpackT(i);
+                obj.streams{m.sIdx}.T = x(m.xIdx);
+            end
+            for i = 1:numel(obj.unpackP)
+                m = obj.unpackP(i);
+                obj.streams{m.sIdx}.P = x(m.xIdx);
+            end
+            for i = 1:numel(obj.unpackU)
+                m = obj.unpackU(i);
+                xi = min(max(x(m.xIdx), m.lb), m.ub);
+                if isnan(m.sub)
+                    m.owner.(m.field) = xi;
+                else
+                    arr = m.owner.(m.field);
+                    arr(m.sub) = xi;
+                    m.owner.(m.field) = arr;
+                end
+            end
+
+            for si = 1:nS
                 s = obj.streams{si};
                 if ~isnan(z(si))
                     s.n_dot = exp(min(max(z(si),obj.zMin),obj.zMax));
                 end
-                if obj.anyYUnknown(s)
+                if any(isfinite(a(si,:)))
                     s.y = obj.reconstructComposition(s, a(si,:));
                 end
                 if ~isnan(s.T), s.T = min(max(s.T,obj.TMin),obj.TMax); end

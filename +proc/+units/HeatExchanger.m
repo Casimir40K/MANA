@@ -48,24 +48,20 @@ classdef HeatExchanger < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.hotInlet.y);
+            eqs = zeros(2*ns + 4, 1);
 
             % Hot side component balances
-            for i = 1:ns
-                eqs(end+1) = obj.hotOutlet.n_dot * obj.hotOutlet.y(i) ...
-                           - obj.hotInlet.n_dot * obj.hotInlet.y(i);
-            end
+            eqs(1:ns) = obj.hotOutlet.n_dot * obj.hotOutlet.y(:) ...
+                       - obj.hotInlet.n_dot * obj.hotInlet.y(:);
 
             % Cold side component balances
-            for i = 1:ns
-                eqs(end+1) = obj.coldOutlet.n_dot * obj.coldOutlet.y(i) ...
-                           - obj.coldInlet.n_dot * obj.coldInlet.y(i);
-            end
+            eqs(ns+1:2*ns) = obj.coldOutlet.n_dot * obj.coldOutlet.y(:) ...
+                            - obj.coldInlet.n_dot * obj.coldInlet.y(:);
 
             % Pressure pass-through (ΔP = 0 both sides)
-            eqs(end+1) = obj.hotOutlet.P  - obj.hotInlet.P;
-            eqs(end+1) = obj.coldOutlet.P - obj.coldInlet.P;
+            eqs(2*ns+1) = obj.hotOutlet.P  - obj.hotInlet.P;
+            eqs(2*ns+2) = obj.coldOutlet.P - obj.coldInlet.P;
 
             % Enthalpy calculations
             zh = obj.hotInlet.y(:)' / max(sum(obj.hotInlet.y), eps);
@@ -84,19 +80,19 @@ classdef HeatExchanger < handle
 
             if isfinite(obj.Th_out)
                 % Spec: hot outlet temperature
-                eqs(end+1) = obj.hotOutlet.T - obj.Th_out;
+                eqs(2*ns+3) = obj.hotOutlet.T - obj.Th_out;
             elseif isfinite(obj.Tc_out)
                 % Spec: cold outlet temperature
-                eqs(end+1) = obj.coldOutlet.T - obj.Tc_out;
+                eqs(2*ns+3) = obj.coldOutlet.T - obj.Tc_out;
             elseif isfinite(obj.duty)
                 % Spec: duty Q [kW]
-                eqs(end+1) = obj.duty - Q_hot;
+                eqs(2*ns+3) = obj.duty - Q_hot;
             else
                 error('HeatExchanger: must specify Th_out, Tc_out, or duty.');
             end
 
             % Energy balance: Q_hot = Q_cold (always enforced)
-            eqs(end+1) = Q_hot - Q_cold;
+            eqs(2*ns+4) = Q_hot - Q_cold;
         end
 
         function labels = equationLabels(obj)
