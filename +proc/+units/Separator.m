@@ -16,29 +16,32 @@ classdef Separator < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
+            nNorm = 2 * obj.includeNormalizationConstraints;
+            eqs = zeros(2*ns + nNorm + 4, 1);
 
-            % Component split equations
-            for i = 1:ns
-                eqs(end+1) = obj.outletA.n_dot * obj.outletA.y(i) ...
-                          - obj.phi(i) * obj.inlet.n_dot * obj.inlet.y(i);
-                eqs(end+1) = obj.outletB.n_dot * obj.outletB.y(i) ...
-                          - (1 - obj.phi(i)) * obj.inlet.n_dot * obj.inlet.y(i);
-            end
+            % Component split equations (vectorized, interleaved A/B)
+            inFlow = obj.inlet.n_dot * obj.inlet.y(:);
+            phi = obj.phi(:);
+            eqs(1:2:2*ns-1) = obj.outletA.n_dot * obj.outletA.y(:) ...
+                             - phi .* inFlow;
+            eqs(2:2:2*ns)   = obj.outletB.n_dot * obj.outletB.y(:) ...
+                             - (1 - phi) .* inFlow;
+
+            pos = 2*ns;
 
             % Mole fraction sum constraints (legacy optional; disabled by default because y uses softmax parameterization)
             if obj.includeNormalizationConstraints
-                eqs(end+1) = sum(obj.outletA.y) - 1;
-                eqs(end+1) = sum(obj.outletB.y) - 1;
+                eqs(pos+1) = sum(obj.outletA.y) - 1;
+                eqs(pos+2) = sum(obj.outletB.y) - 1;
+                pos = pos + 2;
             end
 
-
             % T/P pass-through
-            eqs(end+1) = obj.outletA.T - obj.inlet.T;
-            eqs(end+1) = obj.outletB.T - obj.inlet.T;
-            eqs(end+1) = obj.outletA.P - obj.inlet.P;
-            eqs(end+1) = obj.outletB.P - obj.inlet.P;
+            eqs(pos+1) = obj.outletA.T - obj.inlet.T;
+            eqs(pos+2) = obj.outletB.T - obj.inlet.T;
+            eqs(pos+3) = obj.outletA.P - obj.inlet.P;
+            eqs(pos+4) = obj.outletB.P - obj.inlet.P;
         end
 
         function str = describe(obj)

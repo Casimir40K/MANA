@@ -20,6 +20,10 @@ classdef IdealGasMixture < handle
         ns              double = 0          % number of species
     end
 
+    properties (Access = private)
+        MWvec   double = []    % cached MW vector for fast MW_mix
+    end
+
     methods
         function obj = IdealGasMixture(speciesNames, thermoLib)
             %IDEALGASMIXTURE Construct from species names + ThermoLibrary.
@@ -28,8 +32,10 @@ classdef IdealGasMixture < handle
             obj.speciesNames = speciesNames(:)';
             obj.ns = numel(speciesNames);
             obj.speciesObjects = cell(1, obj.ns);
+            obj.MWvec = zeros(obj.ns, 1);
             for i = 1:obj.ns
                 obj.speciesObjects{i} = thermoLib.get(speciesNames{i});
+                obj.MWvec(i) = obj.speciesObjects{i}.MW;
             end
         end
 
@@ -60,18 +66,16 @@ classdef IdealGasMixture < handle
 
         function mw = MW_mix(obj, z)
             %MW_MIX Mean molecular weight [kg/kmol].
-            mw = 0;
-            for i = 1:obj.ns
-                mw = mw + z(i) * obj.speciesObjects{i}.MW;
-            end
+            mw = z(:)' * obj.MWvec;
         end
 
         function cp = cp_mix(obj, T, z)
             %CP_MIX Mixture cp [kJ/(kmol*K)] at T, mole fractions z.
             cp = 0;
             for i = 1:obj.ns
-                if z(i) > 0
-                    cp = cp + z(i) * obj.speciesObjects{i}.cp_molar(T);
+                zi = z(i);
+                if zi > 0
+                    cp = cp + zi * obj.speciesObjects{i}.cp_molar(T);
                 end
             end
         end
@@ -80,8 +84,9 @@ classdef IdealGasMixture < handle
             %H_MIX_SENSIBLE Sensible enthalpy of mixture [kJ/kmol] relative to Tref.
             h = 0;
             for i = 1:obj.ns
-                if z(i) > 0
-                    h = h + z(i) * obj.speciesObjects{i}.h_sensible(T);
+                zi = z(i);
+                if zi > 0
+                    h = h + zi * obj.speciesObjects{i}.h_sensible(T);
                 end
             end
         end
@@ -91,8 +96,9 @@ classdef IdealGasMixture < handle
             %   Requires Hf298 for all species; NaN propagates if any missing.
             h = 0;
             for i = 1:obj.ns
-                if z(i) > 0
-                    h = h + z(i) * obj.speciesObjects{i}.h_absolute(T);
+                zi = z(i);
+                if zi > 0
+                    h = h + zi * obj.speciesObjects{i}.h_absolute(T);
                 end
             end
         end
@@ -100,14 +106,16 @@ classdef IdealGasMixture < handle
         function s = s_mix(obj, T, P, z)
             %S_MIX Mixture entropy [kJ/(kmol*K)] at T, P, mole fractions z.
             %   s = sum(zi * s_i(T)) - R*ln(P/P0) - R*sum(zi*ln(zi))
+            Rbar_ = obj.Rbar;
             s = 0;
             for i = 1:obj.ns
-                if z(i) > 0
-                    s = s + z(i) * obj.speciesObjects{i}.s_molar(T);
-                    s = s - obj.Rbar * z(i) * log(z(i));  % ideal mixing
+                zi = z(i);
+                if zi > 0
+                    s = s + zi * obj.speciesObjects{i}.s_molar(T) ...
+                          - Rbar_ * zi * log(zi);
                 end
             end
-            s = s - obj.Rbar * log(P / obj.P0);  % pressure correction
+            s = s - Rbar_ * log(P / obj.P0);
         end
 
         function cv = cv_mix(obj, T, z)

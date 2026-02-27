@@ -27,40 +27,69 @@ classdef Source < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.outlet.y);
 
+            % Count total equations for pre-allocation
+            nEqs = 0;
+            cfMask = [];
             if ~isempty(obj.componentFlows)
                 if numel(obj.componentFlows) ~= ns
                     error('Source %s: componentFlows must match species count.', string(obj.outlet.name));
                 end
-                for i = 1:ns
-                    if ~isnan(obj.componentFlows(i))
-                        eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(i) - obj.componentFlows(i); %#ok<AGROW>
-                    end
-                end
+                cfMask = ~isnan(obj.componentFlows(:));
+                nEqs = nEqs + nnz(cfMask);
             end
-
             if ~isnan(obj.totalFlow)
-                eqs(end+1) = obj.outlet.n_dot - obj.totalFlow; %#ok<AGROW>
+                nEqs = nEqs + 1;
             end
-
+            compMask = [];
             if ~isempty(obj.composition)
                 if numel(obj.composition) ~= ns
                     error('Source %s: composition must match species count.', string(obj.outlet.name));
                 end
-                for i = 1:ns
-                    if ~isnan(obj.composition(i))
-                        eqs(end+1) = obj.outlet.y(i) - obj.composition(i); %#ok<AGROW>
-                    end
-                end
+                compMask = ~isnan(obj.composition(:));
+                nEqs = nEqs + nnz(compMask);
+            end
+            if obj.specifyT && isfinite(obj.T)
+                nEqs = nEqs + 1;
+            end
+            if obj.specifyP && isfinite(obj.P)
+                nEqs = nEqs + 1;
+            end
+
+            eqs = zeros(nEqs, 1);
+            pos = 0;
+
+            if ~isempty(cfMask)
+                specIdx = find(cfMask);
+                nCf = numel(specIdx);
+                cf = obj.componentFlows(:);
+                eqs(pos+1:pos+nCf) = obj.outlet.n_dot * obj.outlet.y(specIdx) ...
+                                    - cf(specIdx);
+                pos = pos + nCf;
+            end
+
+            if ~isnan(obj.totalFlow)
+                pos = pos + 1;
+                eqs(pos) = obj.outlet.n_dot - obj.totalFlow;
+            end
+
+            if ~isempty(compMask)
+                specIdx = find(compMask);
+                nComp = numel(specIdx);
+                comp = obj.composition(:);
+                eqs(pos+1:pos+nComp) = obj.outlet.y(specIdx) ...
+                                      - comp(specIdx);
+                pos = pos + nComp;
             end
 
             if obj.specifyT && isfinite(obj.T)
-                eqs(end+1) = obj.outlet.T - obj.T; %#ok<AGROW>
+                pos = pos + 1;
+                eqs(pos) = obj.outlet.T - obj.T;
             end
             if obj.specifyP && isfinite(obj.P)
-                eqs(end+1) = obj.outlet.P - obj.P; %#ok<AGROW>
+                pos = pos + 1;
+                eqs(pos) = obj.outlet.P - obj.P;
             end
         end
 

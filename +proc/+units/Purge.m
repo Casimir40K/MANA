@@ -18,30 +18,32 @@ classdef Purge < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
             b = obj.beta;
+            nNorm = 2 * obj.includeNormalizationConstraints;
+            eqs = zeros(2*ns + nNorm + 4, 1);
 
-            % Component-wise split
-            for i = 1:ns
-                eqs(end+1) = obj.recycle.n_dot * obj.recycle.y(i) ...
-                          - b * obj.inlet.n_dot * obj.inlet.y(i);
-                eqs(end+1) = obj.purge.n_dot * obj.purge.y(i) ...
-                          - (1 - b) * obj.inlet.n_dot * obj.inlet.y(i);
-            end
+            % Component-wise split (vectorized, interleaved recycle/purge)
+            inFlow = obj.inlet.n_dot * obj.inlet.y(:);
+            eqs(1:2:2*ns-1) = obj.recycle.n_dot * obj.recycle.y(:) ...
+                             - b * inFlow;
+            eqs(2:2:2*ns)   = obj.purge.n_dot * obj.purge.y(:) ...
+                             - (1 - b) * inFlow;
+
+            pos = 2*ns;
 
             % Mole fraction normalization (legacy optional; disabled by default because y uses softmax parameterization)
             if obj.includeNormalizationConstraints
-                eqs(end+1) = sum(obj.recycle.y) - 1;
-                eqs(end+1) = sum(obj.purge.y) - 1;
+                eqs(pos+1) = sum(obj.recycle.y) - 1;
+                eqs(pos+2) = sum(obj.purge.y) - 1;
+                pos = pos + 2;
             end
 
-
             % T/P pass-through
-            eqs(end+1) = obj.recycle.T - obj.inlet.T;
-            eqs(end+1) = obj.purge.T   - obj.inlet.T;
-            eqs(end+1) = obj.recycle.P - obj.inlet.P;
-            eqs(end+1) = obj.purge.P   - obj.inlet.P;
+            eqs(pos+1) = obj.recycle.T - obj.inlet.T;
+            eqs(pos+2) = obj.purge.T   - obj.inlet.T;
+            eqs(pos+3) = obj.recycle.P - obj.inlet.P;
+            eqs(pos+4) = obj.purge.P   - obj.inlet.P;
         end
 
         function setFixed(obj, beta)

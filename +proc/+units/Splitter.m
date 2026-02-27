@@ -32,31 +32,35 @@ classdef Splitter < handle
         end
 
         function eqs = equations(obj)
-            eqs = [];
             ns = numel(obj.inlet.y);
             nOut = numel(obj.outlets);
 
             if ~isempty(obj.splitFractions)
                 f = obj.splitFractions;
+                eqs = zeros(nOut * ns, 1);
+                inFlow = obj.inlet.n_dot * obj.inlet.y(:);
                 for k = 1:nOut
                     out = obj.outlets{k};
-                    for i = 1:ns
-                        eqs(end+1) = out.n_dot * out.y(i) - f(k) * obj.inlet.n_dot * obj.inlet.y(i);
-                    end
+                    idx = (k-1)*ns + (1:ns);
+                    eqs(idx) = out.n_dot * out.y(:) - f(k) * inFlow;
                 end
             else
                 q = obj.specifiedOutletFlows;
                 knownMask = ~isnan(q);
+                nKnown = nnz(knownMask);
+                nEqs = nKnown + nOut * ns + 1;
+                eqs = zeros(nEqs, 1);
+                pos = 0;
                 for k = 1:nOut
                     out = obj.outlets{k};
                     if knownMask(k)
-                        eqs(end+1) = out.n_dot - q(k);
+                        pos = pos + 1;
+                        eqs(pos) = out.n_dot - q(k);
                     end
-                    for i = 1:ns
-                        eqs(end+1) = out.y(i) - obj.inlet.y(i);
-                    end
+                    eqs(pos+1:pos+ns) = out.y(:) - obj.inlet.y(:);
+                    pos = pos + ns;
                 end
-                eqs(end+1) = sum(cellfun(@(s) s.n_dot, obj.outlets)) - obj.inlet.n_dot;
+                eqs(pos+1) = sum(cellfun(@(s) s.n_dot, obj.outlets)) - obj.inlet.n_dot;
             end
         end
 

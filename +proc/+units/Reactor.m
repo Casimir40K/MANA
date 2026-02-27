@@ -12,13 +12,11 @@ classdef Reactor < handle
             obj.outlet = outlet;
             obj.reactions = reactions;
             obj.conversion = conversion;
+            obj.validateReactions(numel(inlet.y));
         end
 
         function eqs = equations(obj)
-            eqs = [];
             nspecies = length(obj.outlet.y);
-
-            obj.validateReactions(nspecies);
 
             % Step 1: Copy inlet moles
             n_species = obj.inlet.n_dot * obj.inlet.y;
@@ -56,11 +54,10 @@ classdef Reactor < handle
             y_out = n_species / n_out;
 
             % Step 4: Build residuals from component balances
-            for j = 1:nspecies
-                eqs(end+1) = obj.outlet.n_dot * obj.outlet.y(j) - n_out * y_out(j);
-            end
-            eqs(end+1) = obj.outlet.T - obj.inlet.T;
-            eqs(end+1) = obj.outlet.P - obj.inlet.P;
+            eqs = zeros(nspecies + 2, 1);
+            eqs(1:nspecies) = obj.outlet.n_dot * obj.outlet.y(:) - n_out * y_out(:);
+            eqs(nspecies+1) = obj.outlet.T - obj.inlet.T;
+            eqs(nspecies+2) = obj.outlet.P - obj.inlet.P;
         end
 
         function labels = equationLabels(obj)

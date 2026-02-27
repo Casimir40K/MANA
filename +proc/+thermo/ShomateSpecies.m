@@ -39,6 +39,9 @@ classdef ShomateSpecies < handle
 
     properties (Access = private)
         didWarnOutOfRange logical = false
+        cachedRangeIdx double = 0
+        cachedTmin double = -Inf
+        cachedTmax double = Inf
     end
 
     methods
@@ -59,10 +62,18 @@ classdef ShomateSpecies < handle
 
         function c = selectRange(obj, T)
             %SELECTRANGE Return the Shomate coefficient struct for temperature T [K].
+            %   Caches last-used range for fast repeated lookups at similar T.
+            if T >= obj.cachedTmin && T <= obj.cachedTmax && obj.cachedRangeIdx > 0
+                c = obj.ranges(obj.cachedRangeIdx);
+                return
+            end
             c = [];
             for i = 1:numel(obj.ranges)
                 if T >= obj.ranges(i).Tmin && T <= obj.ranges(i).Tmax
                     c = obj.ranges(i);
+                    obj.cachedRangeIdx = i;
+                    obj.cachedTmin = c.Tmin;
+                    obj.cachedTmax = c.Tmax;
                     return
                 end
             end
