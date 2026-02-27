@@ -90,6 +90,10 @@ classdef ProcessSolver < handle
         % Set this before calling solve() to get real-time updates.
         iterCallback = []   % function_handle or empty
 
+        % Optional callback: called each time a solver log line is emitted as
+        % logCallback(line, lineNumber).
+        logCallback = []    % function_handle or empty
+
         % Hidden debug controls (off by default)
         debug logical = false
         debugLevel double = 2
@@ -524,8 +528,15 @@ classdef ProcessSolver < handle
         function log(obj, msg, varargin)
             line = string(sprintf(msg, varargin{:}));
             obj.logLines(end+1,1) = line;
+            k = numel(obj.logLines);
+            if ~isempty(obj.logCallback) && isa(obj.logCallback, 'function_handle')
+                try
+                    obj.logCallback(line, k);
+                catch
+                    % Don't let a callback crash the solver
+                end
+            end
             if obj.printToConsole
-                k = numel(obj.logLines);
                 if obj.consoleStride <= 1 || mod(k, obj.consoleStride) == 0
                     fprintf('%s\n', line);
                 end
