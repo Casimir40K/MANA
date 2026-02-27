@@ -37,6 +37,10 @@ classdef ShomateSpecies < handle
         notes       string = ""
     end
 
+    properties (Access = private)
+        didWarnOutOfRange logical = false
+    end
+
     methods
         function obj = ShomateSpecies(name, MW, ranges, varargin)
             %SHOMATESPECIES Construct species with Shomate data.
@@ -68,9 +72,12 @@ classdef ShomateSpecies < handle
             elseif T > obj.ranges(end).Tmax
                 c = obj.ranges(end);
             end
-            warning('once', 'proc.thermo:outOfRange', ...
-                '%s: T=%.1f K outside Shomate range [%.0f, %.0f]. Clamping.', ...
-                obj.name, T, obj.ranges(1).Tmin, obj.ranges(end).Tmax);
+            if ~obj.didWarnOutOfRange
+                warning('proc.thermo:outOfRange', ...
+                    '%s: T=%.1f K outside Shomate range [%.0f, %.0f]. Clamping.', ...
+                    obj.name, T, obj.ranges(1).Tmin, obj.ranges(end).Tmax);
+                obj.didWarnOutOfRange = true;
+            end
         end
 
         function cp = cp_molar(obj, T)
