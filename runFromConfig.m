@@ -345,8 +345,8 @@ end
 
 function mix = buildThermoMix(speciesNames)
     %BUILDTHERMOMIX Create IdealGasMixture from species names.
-    lib = thermo.ThermoLibrary();
-    mix = thermo.IdealGasMixture(speciesNames, lib);
+    lib = proc.thermo.ThermoLibrary();
+    mix = proc.thermo.IdealGasMixture(speciesNames, lib);
 end
 
 function [resolvedDefs, aliasByOutlet] = resolveIdentityLinks(unitDefs)

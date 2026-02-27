@@ -3,8 +3,8 @@ classdef ThermoLibrary < handle
     %   Loads species Shomate data from a JSON file and provides lookup.
     %
     %   Usage:
-    %     lib = thermo.ThermoLibrary();                    % default library
-    %     lib = thermo.ThermoLibrary('path/to/species.json');
+    %     lib = proc.thermo.ThermoLibrary();                    % default library
+    %     lib = proc.thermo.ThermoLibrary('path/to/species.json');
     %     sp  = lib.get('N2');                              % returns ShomateSpecies
 
     properties
@@ -18,14 +18,15 @@ classdef ThermoLibrary < handle
             obj.speciesMap = containers.Map('KeyType','char','ValueType','any');
             if nargin < 1 || isempty(jsonPath)
                 % Default: library/thermo/species_shomate.json relative to project
-                root = fileparts(fileparts(mfilename('fullpath')));
+                % File is at +proc/+thermo/ThermoLibrary.m, so 3 levels up to reach root
+                root = fileparts(fileparts(fileparts(mfilename('fullpath'))));
                 jsonPath = fullfile(root, 'library', 'thermo', 'species_shomate.json');
             end
             obj.dataFile = string(jsonPath);
             if isfile(jsonPath)
                 obj.loadJSON(jsonPath);
             else
-                warning('thermo:noLibrary', 'Species library not found: %s', jsonPath);
+                warning('proc.thermo:noLibrary', 'Species library not found: %s', jsonPath);
             end
         end
 
@@ -35,7 +36,7 @@ classdef ThermoLibrary < handle
             if obj.speciesMap.isKey(key)
                 sp = obj.speciesMap(key);
             else
-                error('thermo:speciesNotFound', ...
+                error('proc.thermo:speciesNotFound', ...
                     'Species "%s" not found in thermo library. Available: %s', ...
                     key, strjoin(obj.speciesMap.keys(), ', '));
             end
@@ -128,7 +129,7 @@ classdef ThermoLibrary < handle
                 ranges = struct([]);
             end
 
-            sp = thermo.ShomateSpecies(name, MW, ranges);
+            sp = proc.thermo.ShomateSpecies(name, MW, ranges);
 
             if isfield(e, 'formula'),       sp.formula = string(e.formula); end
             if isfield(e, 'source'),        sp.source = string(e.source); end

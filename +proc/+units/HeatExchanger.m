@@ -26,7 +26,7 @@ classdef HeatExchanger < handle
         hotOutlet           % proc.Stream
         coldInlet           % proc.Stream
         coldOutlet          % proc.Stream
-        thermoMix           % thermo.IdealGasMixture (shared for both sides)
+        thermoMix           % proc.thermo.IdealGasMixture (shared for both sides)
 
         Th_out      double = NaN    % hot outlet temperature [K]
         Tc_out      double = NaN    % cold outlet temperature [K]

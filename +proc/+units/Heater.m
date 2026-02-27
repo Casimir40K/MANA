@@ -20,7 +20,7 @@ classdef Heater < handle
     properties
         inlet               % proc.Stream
         outlet              % proc.Stream
-        thermoMix           % thermo.IdealGasMixture
+        thermoMix           % proc.thermo.IdealGasMixture
 
         Tout        double = NaN    % outlet temperature [K]
         duty        double = NaN    % heat duty [kW] (Q > 0 = heating)
