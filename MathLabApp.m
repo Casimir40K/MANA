@@ -275,10 +275,33 @@ classdef MathLabApp < handle
                 'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
                 'onSolveFailure', @(ME) app.onSolveFailure(ME)));
             app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct( ...
-                'refreshResultsTable', @() app.refreshResultsTableImpl(), ...
-                'refreshResultsSummaryModel', @() app.refreshResultsSummaryModelImpl(), ...
-                'refreshResultsSummaryPanel', @() app.refreshResultsSummaryPanelImpl(), ...
-                'refreshResultsTablesTab', @() app.refreshResultsTablesTabImpl()));
+                'getResultsAxes', @() app.ResultsAxes, ...
+                'getResultsXScale', @() app.ResultsXScaleDropDown.Value, ...
+                'getResultsYScale', @() app.ResultsYScaleDropDown.Value, ...
+                'plotResultsConfig', @(idx) app.plotResultsConfig(idx), ...
+                'getResultsLegendLocation', @() app.ResultsLegendDD.Value, ...
+                'setResultsPlotStatus', @(txt) set(app.ResultsPlotStatusLabel, 'Text', txt), ...
+                'getResultsSnapshotCount', @() numel(app.resultsSnapshots), ...
+                'getResultsSmoothingMode', @() app.ResultsSmoothingDD.Value, ...
+                'getResultsSmoothWindow', @() app.ResultsSmoothWindowField.Value, ...
+                'refreshResultsTargetOptions', @() app.refreshResultsTargetOptions(), ...
+                'getResultsSummary', @() app.resultsSummary, ...
+                'setResultsSummary', @(summary) app.setResultsSummary(summary), ...
+                'getLastSolver', @() app.lastSolver, ...
+                'getLastFlowsheet', @() app.lastFlowsheet, ...
+                'unitLabel', @(quantity,base) app.unitLabel(quantity,base), ...
+                'fromSI', @(val,quantity) app.fromSI(val,quantity), ...
+                'shortTypeName', @(u) app.shortTypeName(u), ...
+                'unitObjectResultPairs', @(u) app.unitObjectResultPairs(u), ...
+                'formatSpecValue', @(v) app.formatSpecValue(v), ...
+                'getResultsTablesStatusBanner', @() app.ResultsTablesStatusBanner, ...
+                'getResultsTablesResidualLabel', @() app.ResultsTablesResidualLabel, ...
+                'getResultsTablesIterLabel', @() app.ResultsTablesIterLabel, ...
+                'getResultsStreamTable', @() app.ResultsStreamTable, ...
+                'buildDisplayStreamTable', @() app.buildDisplayStreamTable(), ...
+                'getResultsUnitTable', @() app.ResultsUnitTable, ...
+                'buildUnitResultsTable', @() app.buildUnitResultsTable(), ...
+                'getResultsTablesStatusLabel', @() app.ResultsTablesStatusLabel));
             app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
                 'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
                 'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
@@ -1885,38 +1908,8 @@ classdef MathLabApp < handle
             app.syncStateToModel();
         end
 
-        function refreshResultsTableImpl(app)
-            if isempty(app.ResultsAxes) || ~isvalid(app.ResultsAxes)
-                return;
-            end
-
-            cla(app.ResultsAxes, 'reset');
-            yyaxis(app.ResultsAxes,'left');
-            yyaxis(app.ResultsAxes,'right');
-            yyaxis(app.ResultsAxes,'left');
-            hold(app.ResultsAxes,'on');
-            grid(app.ResultsAxes,'on');
-            app.ResultsAxes.XScale = app.ResultsXScaleDropDown.Value;
-            app.ResultsAxes.YScale = app.ResultsYScaleDropDown.Value;
-
-            plotted = false;
-            for idx = 1:4
-                plotted = app.plotResultsConfig(idx) || plotted;
-            end
-
-            if plotted
-                if strcmp(app.ResultsLegendDD.Value,'off')
-                    legend(app.ResultsAxes,'off');
-                else
-                    legend(app.ResultsAxes,'Location',app.ResultsLegendDD.Value);
-                end
-                app.ResultsPlotStatusLabel.Text = sprintf('Snapshots: %d | smoothing: %s(%d)', ...
-                    numel(app.resultsSnapshots), app.ResultsSmoothingDD.Value, round(app.ResultsSmoothWindowField.Value));
-            else
-                app.ResultsPlotStatusLabel.Text = 'No plottable data. Solve first and verify target/variables.';
-            end
-            hold(app.ResultsAxes,'off');
-            app.refreshResultsTargetOptions();
+        function setResultsSummary(app, summary)
+            app.resultsSummary = summary;
         end
 
 
@@ -2388,93 +2381,6 @@ classdef MathLabApp < handle
             end
         end
 
-        function refreshResultsSummaryModelImpl(app)
-            prevResidual = app.resultsSummary.residual;
-            summary = struct('status','Not solved','residual',NaN,'iterations',0, ...
-                'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
-            if isempty(app.lastSolver)
-                app.resultsSummary = summary;
-                return;
-            end
-
-            iters = 0;
-            try
-                iters = max(0, numel(app.lastSolver.residualHistory)-1);
-            catch
-                iters = 0;
-            end
-            residual = NaN;
-            try
-                if ~isempty(app.lastSolver.residualHistory)
-                    residual = app.lastSolver.residualHistory(end);
-                end
-            catch
-            end
-            try
-                if app.lastSolver.converged
-                    summary.status = 'Converged';
-                else
-                    summary.status = 'Non-converged';
-                end
-            catch
-                summary.status = 'Solved';
-            end
-            summary.residual = residual;
-            summary.iterations = iters;
-
-            if ~isempty(app.lastFlowsheet) && ~isempty(app.lastFlowsheet.streamDisplayNames)
-                nm = char(string(app.lastFlowsheet.streamDisplayNames{1}));
-                summary.streamKey = nm;
-                sref = app.lastFlowsheet.streamDisplayRefs{1};
-                summary.streamText = sprintf('%s | %s=%.4g | %s=%.4g | %s=%.4g', nm, ...
-                    app.unitLabel('flow','n_dot'), app.fromSI(sref.n_dot,'flow'), ...
-                    app.unitLabel('temperature','T'), app.fromSI(sref.T,'temperature'), ...
-                    app.unitLabel('pressure','P'), app.fromSI(sref.P,'pressure'));
-            end
-
-            if ~isempty(app.lastFlowsheet) && ~isempty(app.lastFlowsheet.units)
-                u = app.lastFlowsheet.units{1};
-                uk = sprintf('U1_%s', app.shortTypeName(u));
-                summary.unitKey = uk;
-                upairs = app.unitObjectResultPairs(u);
-                if isempty(upairs)
-                    summary.unitText = sprintf('%s | no reportable metrics', uk);
-                else
-                    summary.unitText = sprintf('%s | %s: %s', uk, upairs{1,1}, app.formatSpecValue(upairs{1,2}));
-                end
-            end
-
-            if isfinite(prevResidual) && isfinite(summary.residual)
-                d = summary.residual - prevResidual;
-                summary.deltaText = sprintf('Residual delta vs previous run: %+0.3e', d);
-            else
-                summary.deltaText = 'Residual delta vs previous run: n/a';
-            end
-            app.resultsSummary = summary;
-        end
-
-        function refreshResultsSummaryPanelImpl(app)
-            % Update the compact status banner on the Results-Tables tab
-            s = app.resultsSummary;
-
-            if ~isempty(app.ResultsTablesStatusBanner) && isvalid(app.ResultsTablesStatusBanner)
-                statusColor = [0.6 0.1 0.1];
-                if strcmp(s.status, 'Converged'), statusColor = [0.1 0.5 0.1]; end
-                app.ResultsTablesStatusBanner.Text = sprintf('Status: %s', s.status);
-                app.ResultsTablesStatusBanner.FontColor = statusColor;
-            end
-            if ~isempty(app.ResultsTablesResidualLabel) && isvalid(app.ResultsTablesResidualLabel)
-                if isfinite(s.residual)
-                    app.ResultsTablesResidualLabel.Text = sprintf('Residual: %.3e', s.residual);
-                else
-                    app.ResultsTablesResidualLabel.Text = 'Residual: -';
-                end
-            end
-            if ~isempty(app.ResultsTablesIterLabel) && isvalid(app.ResultsTablesIterLabel)
-                app.ResultsTablesIterLabel.Text = sprintf('Iterations: %d', s.iterations);
-            end
-        end
-
         function exportResultsSummaryCsv(app)
             T = table(string(app.resultsSummary.status), app.resultsSummary.residual, app.resultsSummary.iterations, ...
                 string(app.resultsSummary.streamKey), string(app.resultsSummary.streamText), ...
@@ -2554,26 +2460,6 @@ classdef MathLabApp < handle
         function exportResultsUnitCsv(app)
             app.exportUnitTableToOutput('csv');
             app.appendResultsExportLog('Unit table CSV export requested (see status/output folder).');
-        end
-
-        function refreshResultsTablesTabImpl(app)
-            if ~isempty(app.ResultsStreamTable) && isvalid(app.ResultsStreamTable)
-                Ts = app.buildDisplayStreamTable();
-                app.ResultsStreamTable.Data = Ts;
-                app.ResultsStreamTable.ColumnName = Ts.Properties.VariableNames;
-            end
-            if ~isempty(app.ResultsUnitTable) && isvalid(app.ResultsUnitTable)
-                Tu = app.buildUnitResultsTable();
-                app.ResultsUnitTable.Data = Tu;
-                app.ResultsUnitTable.ColumnName = Tu.Properties.VariableNames;
-            end
-            if ~isempty(app.ResultsTablesStatusLabel) && isvalid(app.ResultsTablesStatusLabel)
-                if isempty(app.lastSolver)
-                    app.ResultsTablesStatusLabel.Text = 'Tables show current configured values. Run solve for final solved metrics.';
-                else
-                    app.ResultsTablesStatusLabel.Text = 'Tables refreshed from latest solved state.';
-                end
-            end
         end
 
         function updateStabilityAnalysisTab(app)
