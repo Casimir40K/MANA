@@ -274,7 +274,11 @@ classdef MathLabApp < handle
                 'setLastSolver', @(solver) app.setLastSolver(solver), ...
                 'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
                 'onSolveFailure', @(ME) app.onSolveFailure(ME)));
-            app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct());
+            app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct( ...
+                'refreshResultsTable', @() app.refreshResultsTableImpl(), ...
+                'refreshResultsSummaryModel', @() app.refreshResultsSummaryModelImpl(), ...
+                'refreshResultsSummaryPanel', @() app.refreshResultsSummaryPanelImpl(), ...
+                'refreshResultsTablesTab', @() app.refreshResultsTablesTabImpl()));
             app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
                 'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
                 'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
@@ -1566,84 +1570,98 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function dialogLink(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogLink(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogMixer(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogMixer(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogReactor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogReactor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogStoichiometricReactor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogStoichiometricReactor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogConversionReactor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogConversionReactor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogYieldReactor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogYieldReactor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogEquilibriumReactor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogEquilibriumReactor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogHeater(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogHeater(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogCooler(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogCooler(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogHeatExchanger(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogHeatExchanger(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogCompressor(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogCompressor(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogTurbine(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogTurbine(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogSeparator(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogSeparator(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogPurge(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogPurge(sNames, editIdx);
             app.syncStateToModel();
@@ -1842,7 +1860,32 @@ classdef MathLabApp < handle
             app.SolveTimer = [];
         end
 
+
         function refreshResultsTable(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsTable();
+            app.syncStateToModel();
+        end
+
+        function refreshResultsSummaryModel(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsSummaryModel();
+            app.syncStateToModel();
+        end
+
+        function refreshResultsSummaryPanel(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsSummaryPanel();
+            app.syncStateToModel();
+        end
+
+        function refreshResultsTablesTab(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsTablesTab();
+            app.syncStateToModel();
+        end
+
+        function refreshResultsTableImpl(app)
             if isempty(app.ResultsAxes) || ~isvalid(app.ResultsAxes)
                 return;
             end
@@ -2345,7 +2388,7 @@ classdef MathLabApp < handle
             end
         end
 
-        function refreshResultsSummaryModel(app)
+        function refreshResultsSummaryModelImpl(app)
             prevResidual = app.resultsSummary.residual;
             summary = struct('status','Not solved','residual',NaN,'iterations',0, ...
                 'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
@@ -2410,7 +2453,7 @@ classdef MathLabApp < handle
             app.resultsSummary = summary;
         end
 
-        function refreshResultsSummaryPanel(app)
+        function refreshResultsSummaryPanelImpl(app)
             % Update the compact status banner on the Results-Tables tab
             s = app.resultsSummary;
 
@@ -2513,7 +2556,7 @@ classdef MathLabApp < handle
             app.appendResultsExportLog('Unit table CSV export requested (see status/output folder).');
         end
 
-        function refreshResultsTablesTab(app)
+        function refreshResultsTablesTabImpl(app)
             if ~isempty(app.ResultsStreamTable) && isvalid(app.ResultsStreamTable)
                 Ts = app.buildDisplayStreamTable();
                 app.ResultsStreamTable.Data = Ts;
@@ -3778,6 +3821,7 @@ classdef MathLabApp < handle
 
 
         function dialogSplitter(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogSplitter(sNames, editIdx);
             app.syncStateToModel();
@@ -3785,54 +3829,63 @@ classdef MathLabApp < handle
 
 
         function dialogSource(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogSource(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogSink(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogSink(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogDesignSpec(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogDesignSpec(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogAdjust(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogAdjust(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogCalculator(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogCalculator(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogConstraint(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogConstraint(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogRecycle(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogRecycle(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogBypass(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogBypass(sNames, editIdx);
             app.syncStateToModel();
         end
 
         function dialogManifold(app, sNames, editIdx)
+            if nargin<3, editIdx=[]; end
             app.syncModelToState();
             app.UnitsController.dialogManifold(sNames, editIdx);
             app.syncStateToModel();
