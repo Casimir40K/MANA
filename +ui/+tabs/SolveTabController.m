@@ -29,6 +29,10 @@ classdef SolveTabController < handle
                 drawnow limitrate;
             end
 
+            function logCb(line, lineIdx)
+                obj.Services.onSolveLogLine(line, lineIdx);
+            end
+
             try
                 dbg = obj.Services.getDebugSettings();
                 solver = fs.solve('maxIter',maxIt,'tolAbs',tol, ...
@@ -38,7 +42,8 @@ classdef SolveTabController < handle
                     'debugTopN', dbg.debugTopN, ...
                     'debugEvery', dbg.debugEvery, ...
                     'debugEqNames', dbg.debugEqNames, ...
-                    'iterCallback',@iterCb);
+                    'iterCallback',@iterCb, ...
+                    'logCallback',@logCb);
                 obj.Services.setLastSolver(solver);
                 obj.Services.onSolveSuccess(solver);
             catch ME

@@ -147,6 +147,7 @@ classdef MathLabApp < handle
         PowerUnitDropDown
         SaveResultsBtn
         OpenDebugBtn
+        LogEveryNField
 
         % -- Debug popup --
         DebugFig
@@ -200,6 +201,7 @@ classdef MathLabApp < handle
         lastExportPath char = ''
         stabilitySweepData struct = struct('param',[],'values',[],'maxRealPole',[],'stableMask',[],'warnings',strings(0,1))
         debugSettings struct = struct('debugLevel',0,'debugTopN',10,'debugEvery',0,'debugEqNames',true)
+        logEveryN double = 0
     end
 
     % =====================================================================
@@ -270,6 +272,7 @@ classdef MathLabApp < handle
                 'getSolveInputs', @() app.getSolveInputs(), ...
                 'prepareSolveRun', @(tol) app.prepareSolveRun(tol), ...
                 'onSolveIter', @(iter,rNorm) app.onSolveIter(iter,rNorm), ...
+                'onSolveLogLine', @(line,lineIdx) app.onSolveLogLine(line,lineIdx), ...
                 'getDebugSettings', @() app.debugSettings, ...
                 'setLastSolver', @(solver) app.setLastSolver(solver), ...
                 'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
@@ -333,6 +336,7 @@ classdef MathLabApp < handle
             app.AppState.metadata.projectTitle = app.projectTitle;
             app.AppState.metadata.unitPrefs = app.unitPrefs;
             app.AppState.metadata.lastExportPath = app.lastExportPath;
+            app.AppState.metadata.logEveryN = app.logEveryN;
         end
 
         function syncStateToModel(app)
@@ -346,6 +350,9 @@ classdef MathLabApp < handle
             app.projectTitle = app.AppState.metadata.projectTitle;
             app.unitPrefs = app.AppState.metadata.unitPrefs;
             app.lastExportPath = app.AppState.metadata.lastExportPath;
+            if isfield(app.AppState.metadata, 'logEveryN')
+                app.logEveryN = max(0, round(app.AppState.metadata.logEveryN));
+            end
         end
 
         function buildUI(app)
@@ -389,8 +396,8 @@ classdef MathLabApp < handle
 
             % --- Left: project config + save/load ---
             leftP = uipanel(gl, 'Title','Project & Config', 'FontWeight','bold');
-            leftG = uigridlayout(leftP, [5 1], ...
-                'RowHeight',{30, 72, 36, 36, 24}, 'Padding',[8 8 8 8], 'RowSpacing',4);
+            leftG = uigridlayout(leftP, [6 1], ...
+                'RowHeight',{30, 72, 30, 36, 36, 24}, 'Padding',[8 8 8 8], 'RowSpacing',4);
 
             % Project title row
             titleRow = uigridlayout(leftG, [1 2], 'ColumnWidth',{110,'1x'}, ...
@@ -424,6 +431,16 @@ classdef MathLabApp < handle
             uilabel(unitRow,'Text','');  % spacer
             uilabel(unitRow,'Text','');  % spacer
             uilabel(unitRow,'Text','');  % spacer
+
+
+            % Solver log thinning row
+            logRow = uigridlayout(leftG, [1 3], 'ColumnWidth', {180, 80, '1x'}, ...
+                'Padding',[0 0 0 0], 'ColumnSpacing',6);
+            uilabel(logRow,'Text','Solver log: print every N lines', 'FontWeight','bold');
+            app.LogEveryNField = uieditfield(logRow, 'numeric', 'Value', app.logEveryN, ...
+                'Limits',[0 100000], 'RoundFractionalValues','on', ...
+                'ValueChangedFcn', @(src,~) app.onLogEveryNChanged(src));
+            uilabel(logRow,'Text','(0 = every line)', 'FontColor',[0.45 0.45 0.45]);
 
             % Save / Load row
             slRow = uigridlayout(leftG, [1 2], 'ColumnWidth',{'1x','1x'}, ...
@@ -1767,6 +1784,7 @@ classdef MathLabApp < handle
             title(app.ResidualAxes,'Solving...');
 
             app.LogArea.Value = {'Solving...'};
+            drawnow;
             app.SolveIterLabel.Text = 'Iteration: 0';
             app.SolveAvgTimeLabel.Text = 'Avg time/iter: —';
             app.SolveElapsedLabel.Text = 'Elapsed: 00:00';
@@ -1783,6 +1801,29 @@ classdef MathLabApp < handle
             app.resultsSnapshotIters = [];
             app.resultsSnapshotResiduals = [];
             app.captureResultsSnapshot(0, NaN);
+        end
+
+        function onSolveLogLine(app, line, lineIdx)
+            stride = max(0, round(app.logEveryN));
+            if stride > 0 && mod(lineIdx - 1, stride) ~= 0
+                return;
+            end
+
+            vals = app.LogArea.Value;
+            if ischar(vals), vals = {vals}; end
+            if isempty(vals)
+                vals = cell(0,1);
+            end
+            if numel(vals) == 1 && strcmp(vals{1}, 'Solving...')
+                vals = cell(0,1);
+            end
+
+            vals{end+1,1} = char(line);
+            if numel(vals) > 500
+                vals = vals(end-499:end);
+            end
+            app.LogArea.Value = vals;
+            drawnow limitrate;
         end
 
         function onSolveIter(app, iter, rNorm)
@@ -1826,7 +1867,7 @@ classdef MathLabApp < handle
                 app.setStatus('Non-converged iterate; balances not satisfied.');
             end
 
-            app.LogArea.Value = cellstr(solver.logLines);
+            app.updateSolveLogFromSolver(solver.logLines);
             app.captureResultsSnapshot(nIter, solver.residualHistory(end));
             app.refreshResultsSummaryModel();
             app.refreshResultsTable();
@@ -1845,13 +1886,23 @@ classdef MathLabApp < handle
             title(app.ResidualAxes, 'FAILED');
             logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
                 arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
-            app.LogArea.Value = logLines;
+            app.updateSolveLogFromSolver(string(logLines));
             app.writeErrorLog('solve_error', logLines);
             if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
                 app.setStatus('Non-converged iterate; balances not satisfied.');
             else
                 app.setStatus('Solve failed — see log (saved to output/logs).');
             end
+        end
+
+        function updateSolveLogFromSolver(app, lines)
+            vals = cellstr(lines);
+            stride = max(0, round(app.logEveryN));
+            if stride > 0 && ~isempty(vals)
+                idx = 1:stride:numel(vals);
+                vals = vals(idx);
+            end
+            app.LogArea.Value = vals;
         end
 
         function runSolver(app)
@@ -3838,6 +3889,12 @@ classdef MathLabApp < handle
             end
         end
 
+        function onLogEveryNChanged(app, src)
+            val = max(0, round(src.Value));
+            app.logEveryN = val;
+            src.Value = val;
+        end
+
         function loadConfigDialog(app)
             [file, path] = uigetfile('*.mat', 'Load Config');
             if isequal(file, 0), return; end
@@ -3933,6 +3990,12 @@ classdef MathLabApp < handle
             end
             if isfield(cfg,'lastExportPath')
                 app.lastExportPath = char(string(cfg.lastExportPath));
+            end
+            if isfield(cfg,'logEveryN')
+                app.logEveryN = max(0, round(cfg.logEveryN));
+                if ~isempty(app.LogEveryNField) && isvalid(app.LogEveryNField)
+                    app.LogEveryNField.Value = app.logEveryN;
+                end
             end
             app.applyUnitPrefsToControls();
 
@@ -4737,12 +4800,13 @@ classdef MathLabApp < handle
             cfg.projectTitle = app.projectTitle;
             cfg.unitPrefs = app.unitPrefs;
             cfg.lastExportPath = app.lastExportPath;
+            cfg.logEveryN = app.logEveryN;
 
             app.validateConfigPayload(cfg);
         end
 
         function validateConfigPayload(~, cfg)
-            requiredTop = {'speciesNames','speciesMW','streams','unitDefs','maxIter','tolAbs','projectTitle','unitPrefs','lastExportPath'};
+            requiredTop = {'speciesNames','speciesMW','streams','unitDefs','maxIter','tolAbs','projectTitle','unitPrefs','lastExportPath','logEveryN'};
             for i = 1:numel(requiredTop)
                 key = requiredTop{i};
                 if ~isfield(cfg, key)
@@ -4787,6 +4851,9 @@ classdef MathLabApp < handle
 
             if ~isstruct(cfg.unitPrefs)
                 error('MathLab:SaveConfig:InvalidUnits', 'unitPrefs must be a struct.');
+            end
+            if ~isscalar(cfg.logEveryN) || ~isfinite(cfg.logEveryN) || cfg.logEveryN < 0
+                error('MathLab:SaveConfig:InvalidSolverLog', 'logEveryN must be a finite nonnegative scalar.');
             end
             if ~(ischar(cfg.lastExportPath) || (isstring(cfg.lastExportPath) && isscalar(cfg.lastExportPath)))
                 error('MathLab:SaveConfig:InvalidPath', 'lastExportPath must be a text scalar.');
