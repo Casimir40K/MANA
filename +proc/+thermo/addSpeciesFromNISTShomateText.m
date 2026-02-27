@@ -1,8 +1,8 @@
 function sp = addSpeciesFromNISTShomateText(name, MW, text, varargin)
 %ADDSPECIESFROMNISTSHOMATE Parse NIST Shomate coefficient text into a ShomateSpecies.
 %
-%   sp = thermo.addSpeciesFromNISTShomateText(name, MW, text)
-%   sp = thermo.addSpeciesFromNISTShomateText(name, MW, text, 'Hf298_kJkmol', val)
+%   sp = proc.thermo.addSpeciesFromNISTShomateText(name, MW, text)
+%   sp = proc.thermo.addSpeciesFromNISTShomateText(name, MW, text, 'Hf298_kJkmol', val)
 %
 %   The input 'text' should be a multi-line string copied from the NIST
 %   Chemistry WebBook Shomate equation page. Expected format (tab or
@@ -18,13 +18,13 @@ function sp = addSpeciesFromNISTShomateText(name, MW, text, varargin)
 %   G                  227.3665        231.7120
 %   H                  -110.5271       -110.5271
 %
-%   Returns a thermo.ShomateSpecies object.
+%   Returns a proc.thermo.ShomateSpecies object.
 %
 %   Example:
 %     txt = fileread('nist_co_shomate.txt');
-%     sp = thermo.addSpeciesFromNISTShomateText('CO', 28.01, txt, ...
+%     sp = proc.thermo.addSpeciesFromNISTShomateText('CO', 28.01, txt, ...
 %         'Hf298_kJkmol', -110530);
-%     lib = thermo.ThermoLibrary();
+%     lib = proc.thermo.ThermoLibrary();
 %     lib.addSpecies(sp);
 
     p = inputParser;
@@ -75,7 +75,7 @@ function sp = addSpeciesFromNISTShomateText(name, MW, text, varargin)
         end
     end
 
-    sp = thermo.ShomateSpecies(name, MW, ranges, ...
+    sp = proc.thermo.ShomateSpecies(name, MW, ranges, ...
         'Hf298_kJkmol', p.Results.Hf298_kJkmol, ...
         'S298_kJkmolK', p.Results.S298_kJkmolK, ...
         'formula', p.Results.formula, ...

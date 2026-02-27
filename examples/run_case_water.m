@@ -12,8 +12,8 @@ species = {'H2','O2','H2O'};
 fs = proc.Flowsheet(species);
 
 % ---- Thermodynamic mixture (needed for Heater) ----
-thermoLib = thermo.ThermoLibrary();
-mix = thermo.IdealGasMixture(species, thermoLib);
+thermoLib = proc.thermo.ThermoLibrary();
+mix = proc.thermo.IdealGasMixture(species, thermoLib);
 
 % ---- Streams ----
 S1 = proc.Stream("S1", species);  % fresh feed

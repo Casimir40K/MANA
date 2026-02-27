@@ -9,7 +9,7 @@ classdef Stream < handle
         known
 
         % Optional thermo mixture object (set externally for thermo-enabled streams)
-        thermoMix       % thermo.IdealGasMixture or []
+        thermoMix       % proc.thermo.IdealGasMixture or []
     end
 
     methods

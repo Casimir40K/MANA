@@ -147,6 +147,7 @@ classdef MathLabApp < handle
         PowerUnitDropDown
         SaveResultsBtn
         OpenDebugBtn
+        LogEveryNField
 
         % -- Debug popup --
         DebugFig
@@ -174,6 +175,14 @@ classdef MathLabApp < handle
     %  MODEL STATE
     % =====================================================================
     properties (Access = private)
+        AppState ui.AppState
+        SpeciesController ui.tabs.SpeciesTabController
+        StreamsController ui.tabs.StreamsTabController
+        UnitsController ui.tabs.UnitsTabController
+        SolveController ui.tabs.SolveTabController
+        ResultsController ui.tabs.ResultsTabController
+        SensitivityController ui.tabs.SensitivityTabController
+
         speciesNames cell   = {'H2','O2','H2O'}
         speciesMW    double = [2.016, 32.00, 18.015]
 
@@ -192,6 +201,7 @@ classdef MathLabApp < handle
         lastExportPath char = ''
         stabilitySweepData struct = struct('param',[],'values',[],'maxRealPole',[],'stableMask',[],'warnings',strings(0,1))
         debugSettings struct = struct('debugLevel',0,'debugTopN',10,'debugEvery',0,'debugEqNames',true)
+        logEveryN double = 0
     end
 
     % =====================================================================
@@ -199,6 +209,8 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = public)
         function app = MathLabApp(configFile)
+            app.AppState = ui.AppState();
+            app.initControllers();
             app.buildUI();
             if nargin >= 1 && ~isempty(configFile)
                 app.loadConfig(configFile);
@@ -213,6 +225,135 @@ classdef MathLabApp < handle
     %  UI CONSTRUCTION
     % =====================================================================
     methods (Access = private)
+
+        function initControllers(app)
+            app.syncModelToState();
+            app.SpeciesController = ui.tabs.SpeciesTabController(app.AppState, struct( ...
+                'alertError', @(msg) uialert(app.Fig, msg, 'Error'), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'refreshUnitsListBox', @() app.refreshUnitsListBox(), ...
+                'refreshFlowsheetDiagram', @() app.refreshFlowsheetDiagram(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'refreshUnitTablePopup', @() app.refreshUnitTablePopup(), ...
+                'refreshStreamTablePopup', @() app.refreshStreamTablePopup(), ...
+                'refreshResultsTablesTab', @() app.refreshResultsTablesTab(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'refreshSpeciesPropsTable', @() app.refreshSpeciesPropsTable(), ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'setStatus', @(msg) app.setStatus(msg)));
+            app.StreamsController = ui.tabs.StreamsTabController(app.AppState, struct( ...
+                'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
+                'alertWithTitle', @(msg,titleTxt) uialert(app.Fig,msg,titleTxt), ...
+                'getNewStreamName', @() app.StreamNameField.Value, ...
+                'setNextStreamName', @(name) app.setNextStreamName(name), ...
+                'addStreamInternal', @(name) app.addStreamInternal(name), ...
+                'refreshStreamTables', @() app.refreshStreamTables(), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'updateSensDropdowns', @() app.updateSensDropdowns(), ...
+                'getSelectedStreamRow', @() app.getSelectedStreamRow(), ...
+                'toSI', @(val,quantity) app.toSI(val,quantity)));
+            app.UnitsController = ui.tabs.UnitsTabController(app.AppState, struct( ...
+                'findStream', @(name) app.findStream(name), ...
+                'commitUnit', @(u,def,editIdx) app.commitUnit(u,def,editIdx), ...
+                'makeDialog', @(titleStr,w,h,fields) app.makeDialog(titleStr,w,h,fields), ...
+                'addDialogButtons', @(d,okFcn) app.addDialogButtons(d,okFcn), ...
+                'unitLabel', @(quantity,base) app.unitLabel(quantity,base), ...
+                'fromSI', @(val,quantity) app.fromSI(val,quantity), ...
+                'toSI', @(val,quantity) app.toSI(val,quantity), ...
+                'getUnitPrefs', @() app.unitPrefs, ...
+                'buildThermoMixForGUI', @() app.buildThermoMixForGUI()));
+            app.SolveController = ui.tabs.SolveTabController(app.AppState, struct( ...
+                'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
+                'validateSolvePreconditions', @() app.validateSolvePreconditions(), ...
+                'buildFlowsheet', @() app.buildFlowsheet(), ...
+                'setLastFlowsheet', @(fs) app.setLastFlowsheet(fs), ...
+                'updateDOF', @() app.updateDOF(), ...
+                'getSolveInputs', @() app.getSolveInputs(), ...
+                'prepareSolveRun', @(tol) app.prepareSolveRun(tol), ...
+                'onSolveIter', @(iter,rNorm) app.onSolveIter(iter,rNorm), ...
+                'onSolveLogLine', @(line,lineIdx) app.onSolveLogLine(line,lineIdx), ...
+                'getDebugSettings', @() app.debugSettings, ...
+                'setLastSolver', @(solver) app.setLastSolver(solver), ...
+                'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
+                'onSolveFailure', @(ME) app.onSolveFailure(ME)));
+            app.ResultsController = ui.tabs.ResultsTabController(app.AppState, struct( ...
+                'getResultsAxes', @() app.ResultsAxes, ...
+                'getResultsXScale', @() app.ResultsXScaleDropDown.Value, ...
+                'getResultsYScale', @() app.ResultsYScaleDropDown.Value, ...
+                'plotResultsConfig', @(idx) app.plotResultsConfig(idx), ...
+                'getResultsLegendLocation', @() app.ResultsLegendDD.Value, ...
+                'setResultsPlotStatus', @(txt) set(app.ResultsPlotStatusLabel, 'Text', txt), ...
+                'getResultsSnapshotCount', @() numel(app.resultsSnapshots), ...
+                'getResultsSmoothingMode', @() app.ResultsSmoothingDD.Value, ...
+                'getResultsSmoothWindow', @() app.ResultsSmoothWindowField.Value, ...
+                'refreshResultsTargetOptions', @() app.refreshResultsTargetOptions(), ...
+                'getResultsSummary', @() app.resultsSummary, ...
+                'setResultsSummary', @(summary) app.setResultsSummary(summary), ...
+                'getLastSolver', @() app.lastSolver, ...
+                'getLastFlowsheet', @() app.lastFlowsheet, ...
+                'unitLabel', @(quantity,base) app.unitLabel(quantity,base), ...
+                'fromSI', @(val,quantity) app.fromSI(val,quantity), ...
+                'shortTypeName', @(u) app.shortTypeName(u), ...
+                'unitObjectResultPairs', @(u) app.unitObjectResultPairs(u), ...
+                'formatSpecValue', @(v) app.formatSpecValue(v), ...
+                'getResultsTablesStatusBanner', @() app.ResultsTablesStatusBanner, ...
+                'getResultsTablesResidualLabel', @() app.ResultsTablesResidualLabel, ...
+                'getResultsTablesIterLabel', @() app.ResultsTablesIterLabel, ...
+                'getResultsStreamTable', @() app.ResultsStreamTable, ...
+                'buildDisplayStreamTable', @() app.buildDisplayStreamTable(), ...
+                'getResultsUnitTable', @() app.ResultsUnitTable, ...
+                'buildUnitResultsTable', @() app.buildUnitResultsTable(), ...
+                'getResultsTablesStatusLabel', @() app.ResultsTablesStatusLabel));
+            app.SensitivityController = ui.tabs.SensitivityTabController(app.AppState, struct( ...
+                'syncStreamsFromTable', @() app.syncStreamsFromTable(), ...
+                'alertError', @(msg) uialert(app.Fig,msg,'Error'), ...
+                'getSensParamChoice', @() app.SensParamDropDown.Value, ...
+                'getSensMin', @() app.SensMinField.Value, ...
+                'getSensMax', @() app.SensMaxField.Value, ...
+                'getSensNpts', @() app.SensNptsField.Value, ...
+                'getSensOutputStream', @() app.SensOutputStreamDD.Value, ...
+                'getSensOutputField', @() app.SensOutputFieldDD.Value, ...
+                'getSensMaxIter', @() app.SensMaxIterField.Value, ...
+                'getSensTol', @() app.SensTolField.Value, ...
+                'clearSensitivityAxes', @() cla(app.SensAxes), ...
+                'setSensitivityStatus', @(txt) app.setSensitivityStatusText(txt), ...
+                'setSensitivityRunEnabled', @(tf) app.setSensitivityRunEnabled(tf), ...
+                'buildFlowsheet', @() app.buildFlowsheet(), ...
+                'findStream', @(name) app.findStream(name), ...
+                'setStatus', @(msg) app.setStatus(msg), ...
+                'plotSensitivity', @(vals,results,paramLabel,outStreamName,outFieldStr) app.plotSensitivityResults(vals,results,paramLabel,outStreamName,outFieldStr)));
+        end
+
+        function syncModelToState(app)
+            app.AppState.speciesNames = app.speciesNames;
+            app.AppState.speciesMW = app.speciesMW;
+            app.AppState.streams = app.streams;
+            app.AppState.units = app.units;
+            app.AppState.unitDefs = app.unitDefs;
+            app.AppState.lastSolver = app.lastSolver;
+            app.AppState.lastFlowsheet = app.lastFlowsheet;
+            app.AppState.metadata.projectTitle = app.projectTitle;
+            app.AppState.metadata.unitPrefs = app.unitPrefs;
+            app.AppState.metadata.lastExportPath = app.lastExportPath;
+            app.AppState.metadata.logEveryN = app.logEveryN;
+        end
+
+        function syncStateToModel(app)
+            app.speciesNames = app.AppState.speciesNames;
+            app.speciesMW = app.AppState.speciesMW;
+            app.streams = app.AppState.streams;
+            app.units = app.AppState.units;
+            app.unitDefs = app.AppState.unitDefs;
+            app.lastSolver = app.AppState.lastSolver;
+            app.lastFlowsheet = app.AppState.lastFlowsheet;
+            app.projectTitle = app.AppState.metadata.projectTitle;
+            app.unitPrefs = app.AppState.metadata.unitPrefs;
+            app.lastExportPath = app.AppState.metadata.lastExportPath;
+            if isfield(app.AppState.metadata, 'logEveryN')
+                app.logEveryN = max(0, round(app.AppState.metadata.logEveryN));
+            end
+        end
 
         function buildUI(app)
             app.Fig = uifigure('Name','MathLab — Process Solver', ...
@@ -255,8 +396,8 @@ classdef MathLabApp < handle
 
             % --- Left: project config + save/load ---
             leftP = uipanel(gl, 'Title','Project & Config', 'FontWeight','bold');
-            leftG = uigridlayout(leftP, [5 1], ...
-                'RowHeight',{30, 72, 36, 36, 24}, 'Padding',[8 8 8 8], 'RowSpacing',4);
+            leftG = uigridlayout(leftP, [6 1], ...
+                'RowHeight',{30, 72, 30, 36, 36, 24}, 'Padding',[8 8 8 8], 'RowSpacing',4);
 
             % Project title row
             titleRow = uigridlayout(leftG, [1 2], 'ColumnWidth',{110,'1x'}, ...
@@ -290,6 +431,16 @@ classdef MathLabApp < handle
             uilabel(unitRow,'Text','');  % spacer
             uilabel(unitRow,'Text','');  % spacer
             uilabel(unitRow,'Text','');  % spacer
+
+
+            % Solver log thinning row
+            logRow = uigridlayout(leftG, [1 3], 'ColumnWidth', {180, 80, '1x'}, ...
+                'Padding',[0 0 0 0], 'ColumnSpacing',6);
+            uilabel(logRow,'Text','Solver log: print every N lines', 'FontWeight','bold');
+            app.LogEveryNField = uieditfield(logRow, 'numeric', 'Value', app.logEveryN, ...
+                'Limits',[0 100000], 'RoundFractionalValues','on', ...
+                'ValueChangedFcn', @(src,~) app.onLogEveryNChanged(src));
+            uilabel(logRow,'Text','(0 = every line)', 'FontColor',[0.45 0.45 0.45]);
 
             % Save / Load row
             slRow = uigridlayout(leftG, [1 2], 'ColumnWidth',{'1x','1x'}, ...
@@ -844,74 +995,33 @@ classdef MathLabApp < handle
     methods (Access = private)
 
         function refreshSpeciesTable(app)
-            N = numel(app.speciesNames);
-            data = cell(N, 2);
-            for i = 1:N
-                data{i,1} = app.speciesNames{i};
-                data{i,2} = app.speciesMW(i);
-            end
-            app.SpeciesTable.Data = data;
+            app.syncModelToState();
+            app.SpeciesController.refreshSpeciesTable(app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function onSpeciesTableEdit(app, ~, evt)
-            r = evt.Indices(1); c = evt.Indices(2);
-            if r < 1 || r > numel(app.speciesNames), return; end
-            if c == 1,     app.speciesNames{r} = evt.NewData;
-            elseif c == 2, app.speciesMW(r) = evt.NewData;
-            end
+            app.syncModelToState();
+            app.SpeciesController.onSpeciesTableEdit(evt);
+            app.syncStateToModel();
         end
 
         function addSpeciesRow(app)
-            nm = strtrim(app.NewSpeciesName.Value);
-            if isempty(nm), return; end
-            app.speciesNames{end+1} = nm;
-            app.speciesMW(end+1) = app.NewSpeciesMW.Value;
-            app.NewSpeciesName.Value = '';
-            app.refreshSpeciesTable();
+            app.syncModelToState();
+            app.SpeciesController.addSpeciesRow(app.NewSpeciesName, app.NewSpeciesMW, app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function removeSpeciesRow(app)
-            sel = app.SpeciesTable.Selection;
-            if isempty(sel), return; end
-            r = sel(1);
-            if r >= 1 && r <= numel(app.speciesNames)
-                app.speciesNames(r) = [];
-                app.speciesMW(r) = [];
-                app.refreshSpeciesTable();
-            end
+            app.syncModelToState();
+            app.SpeciesController.removeSpeciesRow(app.SpeciesTable);
+            app.syncStateToModel();
         end
 
         function applySpecies(app)
-            if isempty(app.speciesNames)
-                uialert(app.Fig, 'Species list cannot be empty.', 'Error'); return;
-            end
-            app.streams = {};
-            app.units = {};
-            app.unitDefs = {};
-            app.lastSolver = [];
-
-            % Default feed stream
-            app.addStreamInternal('Feed');
-            s = app.streams{1};
-            s.n_dot = 10; s.T = 300; s.P = 1e5;
-            ns = numel(app.speciesNames);
-            y0 = zeros(1,ns); y0(1) = 1;
-            s.y = y0;
-            s.known.n_dot = true; s.known.T = true; s.known.P = true;
-            s.known.y(:) = true;
-
-            app.refreshStreamTables();
-            app.refreshUnitsListBox();
-            app.refreshFlowsheetDiagram();
-            app.updateDOF();
-            app.refreshUnitTablePopup();
-            app.refreshStreamTablePopup();
-            app.refreshResultsTablesTab();
-            app.updateSensDropdowns();
-            app.refreshSpeciesPropsTable();
-            app.StreamNameField.Value = 'S2';
-            app.setStatus(sprintf('Species set: {%s}. Feed created.', ...
-                strjoin(app.speciesNames,', ')));
+            app.syncModelToState();
+            app.SpeciesController.applySpecies();
+            app.syncStateToModel();
         end
 
         function refreshSpeciesPropsTable(app)
@@ -919,7 +1029,7 @@ classdef MathLabApp < handle
             N = numel(app.speciesNames);
             data = cell(N, 6);
             try
-                lib = thermo.ThermoLibrary();
+                lib = proc.thermo.ThermoLibrary();
             catch
                 lib = [];
             end
@@ -963,37 +1073,50 @@ classdef MathLabApp < handle
             app.streams{end+1} = s;
         end
 
-        function addStreamFromUI(app)
-            name = strtrim(app.StreamNameField.Value);
-            if isempty(name)
-                uialert(app.Fig,'Enter a name.','Error'); return;
-            end
-            for i = 1:numel(app.streams)
-                if strcmp(string(app.streams{i}.name), name)
-                    uialert(app.Fig,sprintf('"%s" exists.',name),'Duplicate'); return;
-                end
-            end
-            app.addStreamInternal(name);
-            app.refreshStreamTables();
-            app.updateDOF();
-            app.updateSensDropdowns();
-            % Auto-increment
-            tok = regexp(name, '^([A-Za-z_]*)(\d+)$','tokens');
-            if ~isempty(tok)
-                app.StreamNameField.Value = sprintf('%s%d',tok{1}{1},str2double(tok{1}{2})+1);
+        function setNextStreamName(app, name)
+            app.StreamNameField.Value = char(string(name));
+        end
+
+        function setSensitivityStatusText(app, txt)
+            app.SensStatusLabel.Text = txt;
+        end
+
+        function setSensitivityRunEnabled(app, tf)
+            if tf
+                app.SensRunBtn.Enable = 'on';
+            else
+                app.SensRunBtn.Enable = 'off';
             end
         end
 
-        function removeSelectedStream(app)
+        function plotSensitivityResults(app, vals, results, paramLabel, outStreamName, outFieldStr)
+            plot(app.SensAxes, vals, results, '-o', 'LineWidth',1.5, ...
+                'MarkerSize',5, 'Color',[0.2 0.5 0.8]);
+            xlabel(app.SensAxes, paramLabel);
+            ylabel(app.SensAxes, sprintf('%s . %s', outStreamName, strrep(outFieldStr,'_','\_')));
+            title(app.SensAxes, 'Sensitivity Analysis');
+            grid(app.SensAxes, 'on');
+        end
+
+        function row = getSelectedStreamRow(app)
             sel = app.StreamValTable.Selection;
-            if isempty(sel), return; end
-            row = sel(1);
-            if row >= 1 && row <= numel(app.streams)
-                app.streams(row) = [];
-                app.refreshStreamTables();
-                app.updateDOF();
-                app.updateSensDropdowns();
+            if isempty(sel)
+                row = [];
+                return;
             end
+            row = sel(1);
+        end
+
+        function addStreamFromUI(app)
+            app.syncModelToState();
+            app.StreamsController.addStreamFromUI();
+            app.syncStateToModel();
+        end
+
+        function removeSelectedStream(app)
+            app.syncModelToState();
+            app.StreamsController.removeSelectedStream();
+            app.syncStateToModel();
         end
 
         function refreshStreamTables(app)
@@ -1039,34 +1162,16 @@ classdef MathLabApp < handle
             app.StreamKnownTable.ColumnEditable = [false, true, true, true, true];
         end
 
-        function onStreamValEdit(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            ns = numel(app.speciesNames);
-            switch col
-                case 2, s.n_dot = app.toSI(evt.NewData,'flow');
-                case 3, s.T = app.toSI(evt.NewData,'temperature');
-                case 4, s.P = app.toSI(evt.NewData,'pressure');
-                otherwise
-                    j = col - 4;
-                    if j >= 1 && j <= ns, s.y(j) = evt.NewData; end
-            end
-            app.refreshStreamTables();
+        function onStreamValEdit(app, src, evt)
+            app.syncModelToState();
+            app.StreamsController.onStreamValEdit(src, evt);
+            app.syncStateToModel();
         end
 
-        function onKnownEdit(app, ~, evt)
-            row = evt.Indices(1); col = evt.Indices(2);
-            if row < 1 || row > numel(app.streams), return; end
-            s = app.streams{row};
-            val = logical(evt.NewData);
-            switch col
-                case 2, s.known.n_dot = val;
-                case 3, s.known.T = val;
-                case 4, s.known.P = val;
-                case 5, s.known.y(:) = val;
-            end
-            app.updateDOF();
+        function onKnownEdit(app, src, evt)
+            app.syncModelToState();
+            app.StreamsController.onKnownEdit(src, evt);
+            app.syncStateToModel();
         end
 
         function syncStreamsFromTable(app)
@@ -1506,556 +1611,100 @@ classdef MathLabApp < handle
 
         function dialogLink(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Stream Link', 440, 170, ...
-                {{'Inlet:','dropdown',sNames,'Stream entering the link (state is copied to outlet).'}, ...
-                 {'Outlet:','dropdown',sNames,'Stream receiving the copied state.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Link'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                u=proc.units.Link(app.findStream(def.inlet),app.findStream(def.outlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogLink(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogMixer(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Mixer', 520, 180, ...
-                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '), ...
-                  'Streams to combine (e.g. "S1, S2").'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Combined outlet stream.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
-                ctrls{1}.Value=strjoin(inN,', ');
-                ctrls{2}.Value=char(string(u.outlet.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                inNms=strtrim(strsplit(ctrls{1}.Value,','));
-                inS={};
-                for k=1:numel(inNms)
-                    s=app.findStream(inNms{k});
-                    if isempty(s)
-                        uialert(d,sprintf('"%s" not found.',inNms{k}),'Error'); return;
-                    end
-                    inS{end+1}=s; %#ok
-                end
-                def.type='Mixer'; def.inlets=inNms; def.outlet=ctrls{2}.Value;
-                u=proc.units.Mixer(inS,app.findStream(def.outlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogMixer(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            spStr = strjoin(app.speciesNames,', ');
-
-            d = uifigure('Name','Reactor (Generic)','Position',[250 180 660 420], ...
-                'Resize','off','WindowStyle','modal');
-            dg = uigridlayout(d,[8 2],'ColumnWidth',{170,'1x'}, ...
-                'RowHeight',repmat({28},1,8),'Padding',[12 12 12 12],'RowSpacing',4);
-
-            uilabel(dg,'Text','Inlet stream:','FontWeight','bold');
-            ddIn = uidropdown(dg,'Items',sNames);
-            ddIn.Tooltip = 'Feed stream entering the reactor.';
-            uilabel(dg,'Text','Outlet stream:','FontWeight','bold');
-            ddOut = uidropdown(dg,'Items',sNames);
-            ddOut.Tooltip = 'Product stream leaving the reactor.';
-            uilabel(dg,'Text','Conversion (0 to 1):','FontWeight','bold');
-            efConv = uieditfield(dg,'numeric','Value',0.5,'Limits',[0 1]);
-            efConv.Tooltip = 'Fractional conversion of the limiting reactant.';
-            lbl=uilabel(dg,'Text',sprintf('Species: %s (1..%d)',spStr,ns));
-            lbl.FontColor=[0.4 0.4 0.4]; uilabel(dg,'Text','');
-            uilabel(dg,'Text','Reactant species indices:','FontWeight','bold');
-            efReact = uieditfield(dg,'text','Value','1 2');
-            efReact.Tooltip = 'Species indices consumed by the reaction.';
-            uilabel(dg,'Text','Product species indices:','FontWeight','bold');
-            efProd = uieditfield(dg,'text','Value',num2str(ns));
-            efProd.Tooltip = 'Species indices produced by the reaction.';
-            uilabel(dg,'Text','Stoichiometric coefficients:','FontWeight','bold');
-            efStoich = uieditfield(dg,'text','Value',num2str(zeros(1,ns)));
-            efStoich.Tooltip = 'One coefficient per species in the shown species order.';
-
-            btnG = uigridlayout(dg,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0]);
-            btnG.Layout.Row=8; btnG.Layout.Column=[1 2];
-            uibutton(btnG,'push','Text','OK','FontWeight','bold', ...
-                'BackgroundColor',[0.82 0.95 0.82],'ButtonPushedFcn',@(~,~)okCb());
-            uibutton(btnG,'push','Text','Cancel','ButtonPushedFcn',@(~,~)delete(d));
-
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ddIn.Value=char(string(u.inlet.name));
-                ddOut.Value=char(string(u.outlet.name));
-                efConv.Value=u.conversion;
-                r=u.reactions(1);
-                efReact.Value=num2str(r.reactants);
-                efProd.Value=num2str(r.products);
-                efStoich.Value=num2str(r.stoich);
-            elseif numel(sNames)>=2, ddOut.Value=sNames{2}; end
-
-            function okCb()
-                rxn.reactants=str2num(efReact.Value); %#ok
-                rxn.products=str2num(efProd.Value); %#ok
-                rxn.stoich=str2num(efStoich.Value); %#ok
-                rxn.name="reaction";
-                if isempty(rxn.reactants)||isempty(rxn.products)||numel(rxn.stoich)~=ns
-                    uialert(d,sprintf('Stoich must have %d entries.',ns),'Error'); return;
-                end
-                def.type='Reactor'; def.inlet=ddIn.Value; def.outlet=ddOut.Value;
-                def.conversion=efConv.Value; def.reactions=rxn;
-                u=proc.units.Reactor(app.findStream(def.inlet),...
-                    app.findStream(def.outlet),rxn,efConv.Value);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogStoichiometricReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Stoichiometric Reactor', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species in order (negative = consumed, positive = produced).'}, ...
-                 {'Extent mode:','text','fixed','"fixed" to specify extent directly, or "solve" to let the solver find it.'}, ...
-                 {'Reaction extent:','numeric',0,'Molar extent of reaction (used when mode is "fixed").'}, ...
-                 {'Reference species index:','numeric',1,'Species index for sign convention.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                ctrls{3}.Value=num2str(u.nu.');
-                ctrls{4}.Value=u.extentMode;
-                ctrls{5}.Value=u.extent;
-                ctrls{6}.Value=u.referenceSpecies;
-            elseif numel(sNames)>=2
-                ctrls{2}.Value=sNames{2};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                nu = str2num(ctrls{3}.Value); %#ok
-                if numel(nu) ~= ns
-                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error'); return;
-                end
-                def.type='StoichiometricReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                def.nu=nu; def.extentMode=strtrim(lower(ctrls{4}.Value));
-                def.extent=ctrls{5}.Value; def.referenceSpecies=ctrls{6}.Value;
-                u=proc.units.StoichiometricReactor(app.findStream(def.inlet), app.findStream(def.outlet), def.nu, ...
-                    'extent', def.extent, 'extentMode', def.extentMode, 'referenceSpecies', def.referenceSpecies);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogStoichiometricReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogConversionReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Conversion Reactor', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
-                 {'Key species index:','numeric',1,'Conversion is defined relative to this species.'}, ...
-                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
-                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the key species that reacts.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                ctrls{3}.Value=num2str(u.nu.');
-                ctrls{4}.Value=u.keySpecies;
-                ctrls{5}.Value=u.conversionMode;
-                ctrls{6}.Value=u.conversion;
-            elseif numel(sNames)>=2
-                ctrls{2}.Value=sNames{2};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                nu = str2num(ctrls{3}.Value); %#ok
-                if numel(nu) ~= ns
-                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error'); return;
-                end
-                def.type='ConversionReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                def.nu=nu; def.keySpecies=ctrls{4}.Value;
-                def.conversionMode=strtrim(lower(ctrls{5}.Value)); def.conversion=ctrls{6}.Value;
-                u=proc.units.ConversionReactor(app.findStream(def.inlet), app.findStream(def.outlet), def.nu, ...
-                    def.keySpecies, def.conversion, 'conversionMode', def.conversionMode);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogConversionReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogYieldReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Yield Reactor', 640, 300, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {'Basis species index:','numeric',1,'Species consumed; conversion and yields are defined relative to this.'}, ...
-                 {'Conversion mode:','text','fixed','"fixed" to specify conversion, or "solve" to let the solver find it.'}, ...
-                 {'Conversion (0 to 1):','numeric',0.5,'Fraction of the basis species that reacts.'}, ...
-                 {'Product species indices:','text','2','Indices of species produced (space-separated, e.g. "2 3").'}, ...
-                 {'Product yields:','text','1','Moles of each product per mole of basis species reacted.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                ctrls{3}.Value=u.basisSpecies;
-                ctrls{4}.Value=u.conversionMode;
-                ctrls{5}.Value=u.conversion;
-                ctrls{6}.Value=num2str(u.productSpecies(:).');
-                ctrls{7}.Value=num2str(u.productYields(:).');
-            elseif numel(sNames)>=2
-                ctrls{2}.Value=sNames{2};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                pIdx = str2num(ctrls{6}.Value); %#ok
-                pY = str2num(ctrls{7}.Value); %#ok
-                if numel(pIdx) ~= numel(pY)
-                    uialert(d,'Product indices and yields must have same length.','Error'); return;
-                end
-                def.type='YieldReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                def.basisSpecies=ctrls{3}.Value;
-                def.conversionMode=strtrim(lower(ctrls{4}.Value)); def.conversion=ctrls{5}.Value;
-                def.productSpecies=pIdx; def.productYields=pY;
-                u=proc.units.YieldReactor(app.findStream(def.inlet), app.findStream(def.outlet), ...
-                    def.basisSpecies, def.conversion, def.productSpecies, def.productYields, ...
-                    'conversionMode', def.conversionMode);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogYieldReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogEquilibriumReactor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Equilibrium Reactor', 620, 260, ...
-                {{'Inlet stream:','dropdown',sNames,'Feed stream entering the reactor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Product stream leaving the reactor.'}, ...
-                 {sprintf('Stoichiometric coefficients (%d species):',ns),'text',num2str(zeros(1,ns)),'One value per species (negative = consumed, positive = produced).'}, ...
-                 {'Equilibrium constant (Keq):','numeric',1,'Equilibrium constant for the reaction.'}, ...
-                 {'Reference species index:','numeric',1,'Species index for equilibrium calculation.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                ctrls{3}.Value=num2str(u.nu.');
-                ctrls{4}.Value=u.Keq;
-                ctrls{5}.Value=u.referenceSpecies;
-            elseif numel(sNames)>=2
-                ctrls{2}.Value=sNames{2};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                nu = str2num(ctrls{3}.Value); %#ok
-                if numel(nu) ~= ns
-                    uialert(d,sprintf('Nu vector must have %d entries.',ns),'Error'); return;
-                end
-                def.type='EquilibriumReactor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                def.nu=nu; def.Keq=ctrls{4}.Value; def.referenceSpecies=ctrls{5}.Value;
-                u=proc.units.EquilibriumReactor(app.findStream(def.inlet), app.findStream(def.outlet), ...
-                    def.nu, def.Keq, 'referenceSpecies', def.referenceSpecies);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogEquilibriumReactor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogHeater(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Heater', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the heater.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Heated stream leaving the heater.'}, ...
-                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
-                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(400,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
-                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Tout), ctrls{3}.Value='Tout'; ctrls{4}.Value=app.fromSI(u.Tout,'temperature');
-                else, ctrls{3}.Value='duty'; ctrls{4}.Value=app.fromSI(u.duty,'duty'); end
-                if isprop(u,'dP') && isfinite(u.dP)
-                    ctrls{5}.Value='dP'; ctrls{6}.Value=app.fromSI(u.dP,'pressure');
-                elseif isprop(u,'Pout') && isfinite(u.Pout)
-                    ctrls{5}.Value='Pout'; ctrls{6}.Value=app.fromSI(u.Pout,'pressure');
-                elseif isprop(u,'PR') && isfinite(u.PR)
-                    ctrls{5}.Value='PR'; ctrls{6}.Value=u.PR;
-                else
-                    ctrls{5}.Value='pass-through'; ctrls{6}.Value=0;
-                end
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Heater'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-
-                tMode=ctrls{3}.Value; tVal=ctrls{4}.Value;
-                if ~isfinite(tVal)
-                    uialert(d,'Thermal value must be finite.','Error'); return;
-                end
-                if strcmp(tMode,'Tout'), def.Tout=app.toSI(tVal,'temperature'); else, def.duty=app.toSI(tVal,'duty'); end
-
-                pMode=ctrls{5}.Value; pVal=ctrls{6}.Value;
-                if ~strcmp(pMode,'pass-through') && ~isfinite(pVal)
-                    uialert(d,'Pressure value must be finite for selected pressure mode.','Error'); return;
-                end
-                if strcmp(pMode,'dP')
-                    def.dP = app.toSI(pVal,'pressure');
-                elseif strcmp(pMode,'Pout')
-                    if pVal <= 0, uialert(d,sprintf('Pout must be > 0 %s.', app.unitPrefs.pressure),'Error'); return; end
-                    def.Pout = app.toSI(pVal,'pressure');
-                elseif strcmp(pMode,'PR')
-                    if pVal <= 0, uialert(d,'PR must be > 0.','Error'); return; end
-                    def.PR = pVal;
-                end
-
-                pCount = double(isfield(def,'dP')) + double(isfield(def,'Pout')) + double(isfield(def,'PR'));
-                if pCount > 1
-                    uialert(d,'Select only one pressure mode (dP, Pout, or PR).','Error'); return;
-                end
-
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {};
-                if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
-                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Heater(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogHeater(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogCooler(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Cooler', 620, 280, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the cooler.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Cooled stream leaving the cooler.'}, ...
-                 {'Thermal spec:','dropdown',{'Tout','duty'},'Set outlet temperature or heat duty.'}, ...
-                 {sprintf('Thermal value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(300,'temperature'),'Numerical value for the chosen thermal spec.'}, ...
-                 {'Pressure spec:','dropdown',{'pass-through','dP','Pout','PR'},'How to handle outlet pressure.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',0,'Value for the chosen pressure spec (ignored for pass-through).'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Tout), ctrls{3}.Value='Tout'; ctrls{4}.Value=app.fromSI(u.Tout,'temperature');
-                else, ctrls{3}.Value='duty'; ctrls{4}.Value=app.fromSI(u.duty,'duty'); end
-                if isprop(u,'dP') && isfinite(u.dP)
-                    ctrls{5}.Value='dP'; ctrls{6}.Value=app.fromSI(u.dP,'pressure');
-                elseif isprop(u,'Pout') && isfinite(u.Pout)
-                    ctrls{5}.Value='Pout'; ctrls{6}.Value=app.fromSI(u.Pout,'pressure');
-                elseif isprop(u,'PR') && isfinite(u.PR)
-                    ctrls{5}.Value='PR'; ctrls{6}.Value=u.PR;
-                else
-                    ctrls{5}.Value='pass-through'; ctrls{6}.Value=0;
-                end
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Cooler'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-
-                tMode=ctrls{3}.Value; tVal=ctrls{4}.Value;
-                if ~isfinite(tVal)
-                    uialert(d,'Thermal value must be finite.','Error'); return;
-                end
-                if strcmp(tMode,'Tout'), def.Tout=app.toSI(tVal,'temperature'); else, def.duty=app.toSI(tVal,'duty'); end
-
-                pMode=ctrls{5}.Value; pVal=ctrls{6}.Value;
-                if ~strcmp(pMode,'pass-through') && ~isfinite(pVal)
-                    uialert(d,'Pressure value must be finite for selected pressure mode.','Error'); return;
-                end
-                if strcmp(pMode,'dP')
-                    def.dP = app.toSI(pVal,'pressure');
-                elseif strcmp(pMode,'Pout')
-                    if pVal <= 0, uialert(d,sprintf('Pout must be > 0 %s.', app.unitPrefs.pressure),'Error'); return; end
-                    def.Pout = app.toSI(pVal,'pressure');
-                elseif strcmp(pMode,'PR')
-                    if pVal <= 0, uialert(d,'PR must be > 0.','Error'); return; end
-                    def.PR = pVal;
-                end
-
-                pCount = double(isfield(def,'dP')) + double(isfield(def,'Pout')) + double(isfield(def,'PR'));
-                if pCount > 1
-                    uialert(d,'Select only one pressure mode (dP, Pout, or PR).','Error'); return;
-                end
-
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {};
-                if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
-                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Cooler(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogCooler(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogHeatExchanger(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Heat Exchanger', 650, 300, ...
-                {{'Hot inlet:','dropdown',sNames,'Hot stream entering the exchanger.'}, ...
-                 {'Hot outlet:','dropdown',sNames,'Hot stream leaving the exchanger.'}, ...
-                 {'Cold inlet:','dropdown',sNames,'Cold stream entering the exchanger.'}, ...
-                 {'Cold outlet:','dropdown',sNames,'Cold stream leaving the exchanger.'}, ...
-                 {'Spec mode:','dropdown',{'Th_out','Tc_out','duty'},'Specify hot outlet T, cold outlet T, or heat duty.'}, ...
-                 {sprintf('Spec value (%s or %s):', app.unitLabel('temperature','T'), app.unitLabel('duty','Q')),'numeric',app.fromSI(350,'temperature'),'Value for the chosen specification.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.hotInlet.name));
-                ctrls{2}.Value=char(string(u.hotOutlet.name));
-                ctrls{3}.Value=char(string(u.coldInlet.name));
-                ctrls{4}.Value=char(string(u.coldOutlet.name));
-                if isfinite(u.Th_out), ctrls{5}.Value='Th_out'; ctrls{6}.Value=app.fromSI(u.Th_out,'temperature');
-                elseif isfinite(u.Tc_out), ctrls{5}.Value='Tc_out'; ctrls{6}.Value=app.fromSI(u.Tc_out,'temperature');
-                else, ctrls{5}.Value='duty'; ctrls{6}.Value=app.fromSI(u.duty,'duty'); end
-            elseif numel(sNames)>=4
-                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3}; ctrls{4}.Value=sNames{4};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='HeatExchanger';
-                def.hotInlet=ctrls{1}.Value; def.hotOutlet=ctrls{2}.Value;
-                def.coldInlet=ctrls{3}.Value; def.coldOutlet=ctrls{4}.Value;
-                mode=ctrls{5}.Value; val=ctrls{6}.Value;
-                if strcmp(mode,'Th_out'), def.Th_out=app.toSI(val,'temperature');
-                elseif strcmp(mode,'Tc_out'), def.Tc_out=app.toSI(val,'temperature');
-                else, def.duty=app.toSI(val,'duty'); end
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {};
-                if isfield(def,'Th_out'), args=[args,{'Th_out',def.Th_out}]; end
-                if isfield(def,'Tc_out'), args=[args,{'Tc_out',def.Tc_out}]; end
-                if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                u=proc.units.HeatExchanger(app.findStream(def.hotInlet),app.findStream(def.hotOutlet),...
-                    app.findStream(def.coldInlet),app.findStream(def.coldOutlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogHeatExchanger(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogCompressor(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Compressor', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the compressor.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Compressed stream leaving the compressor.'}, ...
-                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(2e5,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
-                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Compressor isentropic efficiency.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=app.fromSI(u.Pout,'pressure');
-                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
-                ctrls{5}.Value=u.eta;
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Compressor'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                mode=ctrls{3}.Value; val=ctrls{4}.Value;
-                if strcmp(mode,'Pout'), def.Pout=app.toSI(val,'pressure'); else, def.PR=val; end
-                def.eta=ctrls{5}.Value;
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {'eta', def.eta};
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Compressor(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogCompressor(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogTurbine(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Turbine', 560, 240, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream entering the turbine.'}, ...
-                 {'Outlet stream:','dropdown',sNames,'Expanded stream leaving the turbine.'}, ...
-                 {'Pressure spec:','dropdown',{'Pout','PR'},'Set outlet pressure or pressure ratio.'}, ...
-                 {sprintf('Pressure value (%s or ratio):', app.unitLabel('pressure','P')),'numeric',app.fromSI(5e4,'pressure'),'Numerical value for the chosen pressure spec.'}, ...
-                 {'Isentropic efficiency (0 to 1):','numeric',0.85,'Turbine isentropic efficiency.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outlet.name));
-                if isfinite(u.Pout), ctrls{3}.Value='Pout'; ctrls{4}.Value=app.fromSI(u.Pout,'pressure');
-                else, ctrls{3}.Value='PR'; ctrls{4}.Value=u.PR; end
-                ctrls{5}.Value=u.eta;
-            elseif numel(sNames)>=2, ctrls{2}.Value=sNames{2}; end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Turbine'; def.inlet=ctrls{1}.Value; def.outlet=ctrls{2}.Value;
-                mode=ctrls{3}.Value; val=ctrls{4}.Value;
-                if strcmp(mode,'Pout'), def.Pout=app.toSI(val,'pressure'); else, def.PR=val; end
-                def.eta=ctrls{5}.Value;
-                mix = app.buildThermoMixForGUI();
-                if isempty(mix), uialert(d,'Species not in thermo library.','Error'); return; end
-                args = {'eta', def.eta};
-                if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                u=proc.units.Turbine(app.findStream(def.inlet),app.findStream(def.outlet),mix,args{:});
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogTurbine(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogSeparator(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Separator', 620, 240, ...
-                {{'Feed stream:','dropdown',sNames,'Stream entering the separator.'}, ...
-                 {'Outlet A:','dropdown',sNames,'First outlet stream.'}, ...
-                 {'Outlet B:','dropdown',sNames,'Second outlet stream (remainder).'}, ...
-                 {sprintf('Split fractions to A (%d species):',ns),'text',num2str(repmat(0.5,1,ns)),'Fraction of each species sent to outlet A (0 to 1). Remainder goes to B.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.outletA.name));
-                ctrls{3}.Value=char(string(u.outletB.name));
-                ctrls{4}.Value=num2str(u.phi);
-            elseif numel(sNames)>=3
-                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                phi=str2num(ctrls{4}.Value); %#ok
-                if numel(phi)~=ns
-                    uialert(d,sprintf('phi needs %d values.',ns),'Error'); return;
-                end
-                def.type='Separator'; def.inlet=ctrls{1}.Value;
-                def.outletA=ctrls{2}.Value; def.outletB=ctrls{3}.Value; def.phi=phi;
-                u=proc.units.Separator(app.findStream(def.inlet),...
-                    app.findStream(def.outletA),app.findStream(def.outletB),phi);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSeparator(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogPurge(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Purge Split', 560, 230, ...
-                {{'Feed stream:','dropdown',sNames,'Stream to split into recycle and purge.'}, ...
-                 {'Recycle stream:','dropdown',sNames,'Stream returned to the loop.'}, ...
-                 {'Purge stream:','dropdown',sNames,'Bleed stream removed from the loop.'}, ...
-                 {'Recycle fraction (0 to 1):','numeric',0.9,'Fraction of feed sent to recycle. Remainder goes to purge.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.recycle.name));
-                ctrls{3}.Value=char(string(u.purge.name));
-                ctrls{4}.Value=u.beta;
-            elseif numel(sNames)>=3
-                ctrls{2}.Value=sNames{2}; ctrls{3}.Value=sNames{3};
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Purge'; def.inlet=ctrls{1}.Value;
-                def.recycle=ctrls{2}.Value; def.purge=ctrls{3}.Value;
-                def.beta=ctrls{4}.Value;
-                u=proc.units.Purge(app.findStream(def.inlet),...
-                    app.findStream(def.recycle),app.findStream(def.purge),def.beta);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogPurge(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         % Generic dialog builder
@@ -2101,24 +1750,29 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = private)
 
-        function runSolver(app)
-            app.syncStreamsFromTable();
-
+        function ok = validateSolvePreconditions(app)
+            ok = false;
             if isempty(app.streams)
-                uialert(app.Fig,'No streams.','Error'); return;
+                uialert(app.Fig,'No streams.','Error');
+                return;
             end
             if isempty(app.units)
-                uialert(app.Fig,'No units.','Error'); return;
+                uialert(app.Fig,'No units.','Error');
+                return;
             end
+            ok = true;
+        end
 
-            fs = app.buildFlowsheet();
+        function setLastFlowsheet(app, fs)
             app.lastFlowsheet = fs;
-            app.updateDOF();
+        end
 
+        function [maxIt, tol] = getSolveInputs(app)
             maxIt = app.MaxIterField.Value;
-            tol   = app.TolField.Value;
+            tol = app.TolField.Value;
+        end
 
-            % Prepare real-time plot
+        function hLine = prepareSolveRun(app, tol)
             cla(app.ResidualAxes);
             hLine = animatedline(app.ResidualAxes, 'Color',[0.15 0.50 0.75], ...
                 'LineWidth',1.8, 'Marker','o', 'MarkerSize',3);
@@ -2130,13 +1784,11 @@ classdef MathLabApp < handle
             title(app.ResidualAxes,'Solving...');
 
             app.LogArea.Value = {'Solving...'};
-
-            % Reset metrics bar
+            drawnow;
             app.SolveIterLabel.Text = 'Iteration: 0';
             app.SolveAvgTimeLabel.Text = 'Avg time/iter: —';
             app.SolveElapsedLabel.Text = 'Elapsed: 00:00';
 
-            % Start elapsed-time clock (updates every 0.25s)
             app.SolveStartTic = tic;
             app.SolveTimer = timer('ExecutionMode','fixedRate', ...
                 'Period', 0.25, 'TimerFcn', @(~,~) app.updateElapsedClock(), ...
@@ -2149,93 +1801,114 @@ classdef MathLabApp < handle
             app.resultsSnapshotIters = [];
             app.resultsSnapshotResiduals = [];
             app.captureResultsSnapshot(0, NaN);
+        end
 
-            % Callback for real-time updates
-            function iterCb(iter, rNorm)
-                addpoints(hLine, iter, rNorm);
-                app.captureResultsSnapshot(iter, rNorm);
-                % Update iteration count & avg time
-                elapsed = toc(app.SolveStartTic);
-                app.SolveIterLabel.Text = sprintf('Iteration: %d', iter);
-                if iter > 0
-                    avgMs = (elapsed / iter) * 1000;
-                    if avgMs >= 1000
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
-                    else
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
-                    end
-                end
-                drawnow limitrate;
+        function onSolveLogLine(app, line, lineIdx)
+            stride = max(0, round(app.logEveryN));
+            if stride > 0 && mod(lineIdx - 1, stride) ~= 0
+                return;
             end
 
-            try
-                dbg = app.debugSettings;
-                solver = fs.solve('maxIter',maxIt,'tolAbs',tol, ...
-                    'autoScale',true, ...
-                    'printToConsole', false, ...
-                    'debugLevel', dbg.debugLevel, ...
-                    'debugTopN', dbg.debugTopN, ...
-                    'debugEvery', dbg.debugEvery, ...
-                    'debugEqNames', dbg.debugEqNames, ...
-                    'iterCallback',@iterCb);
-                app.lastSolver = solver;
+            vals = app.LogArea.Value;
+            if ischar(vals), vals = {vals}; end
+            if isempty(vals)
+                vals = cell(0,1);
+            end
+            if numel(vals) == 1 && strcmp(vals{1}, 'Solving...')
+                vals = cell(0,1);
+            end
 
-                % Stop elapsed clock
-                app.stopSolveTimer();
+            vals{end+1,1} = char(line);
+            if numel(vals) > 500
+                vals = vals(end-499:end);
+            end
+            app.LogArea.Value = vals;
+            drawnow limitrate;
+        end
 
-                % Final metrics update
-                nIter = numel(solver.residualHistory) - 1;
-                elapsed = toc(app.SolveStartTic);
-                app.SolveIterLabel.Text = sprintf('Iteration: %d', nIter);
-                app.updateElapsedClock();
-                if nIter > 0
-                    avgMs = (elapsed / nIter) * 1000;
-                    if avgMs >= 1000
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
-                    else
-                        app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
-                    end
-                end
-
-                % Final plot cleanup
-                if solver.converged
-                    title(app.ResidualAxes, ...
-                        sprintf('Converged in %d iterations', nIter));
-                    app.setStatus('Solve completed.');
+        function onSolveIter(app, iter, rNorm)
+            app.captureResultsSnapshot(iter, rNorm);
+            elapsed = toc(app.SolveStartTic);
+            app.SolveIterLabel.Text = sprintf('Iteration: %d', iter);
+            if iter > 0
+                avgMs = (elapsed / iter) * 1000;
+                if avgMs >= 1000
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
                 else
-                    title(app.ResidualAxes, 'NON-CONVERGED');
-                    app.setStatus('Non-converged iterate; balances not satisfied.');
-                end
-
-                app.LogArea.Value = cellstr(solver.logLines);
-
-                app.captureResultsSnapshot(nIter, solver.residualHistory(end));
-                app.refreshResultsSummaryModel();
-
-                app.refreshResultsTable();
-                app.updateStabilityAnalysisTab();
-                app.refreshResultsSummaryPanel();
-                app.refreshResultsTablesTab();
-
-                app.refreshStreamTables();
-
-            catch ME
-                app.stopSolveTimer();
-                app.resultsSummary = struct('status','Solve failed','residual',NaN,'iterations',0, ...
-                    'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
-                app.refreshResultsSummaryPanel();
-                app.refreshResultsTablesTab();
-                title(app.ResidualAxes, 'FAILED');
-                logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
-                    arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
-                app.LogArea.Value = logLines;
-                app.writeErrorLog('solve_error', logLines);
-                if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
-                    app.setStatus('Non-converged iterate; balances not satisfied.');
-                else
-                    app.setStatus('Solve failed — see log (saved to output/logs).');
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
                 end
             end
+        end
+
+        function setLastSolver(app, solver)
+            app.lastSolver = solver;
+        end
+
+        function onSolveSuccess(app, solver)
+            app.stopSolveTimer();
+            nIter = numel(solver.residualHistory) - 1;
+            elapsed = toc(app.SolveStartTic);
+            app.SolveIterLabel.Text = sprintf('Iteration: %d', nIter);
+            app.updateElapsedClock();
+            if nIter > 0
+                avgMs = (elapsed / nIter) * 1000;
+                if avgMs >= 1000
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.2f s', avgMs/1000);
+                else
+                    app.SolveAvgTimeLabel.Text = sprintf('Avg time/iter: %.1f ms', avgMs);
+                end
+            end
+
+            if solver.converged
+                title(app.ResidualAxes, sprintf('Converged in %d iterations', nIter));
+                app.setStatus('Solve completed.');
+            else
+                title(app.ResidualAxes, 'NON-CONVERGED');
+                app.setStatus('Non-converged iterate; balances not satisfied.');
+            end
+
+            app.updateSolveLogFromSolver(solver.logLines);
+            app.captureResultsSnapshot(nIter, solver.residualHistory(end));
+            app.refreshResultsSummaryModel();
+            app.refreshResultsTable();
+            app.updateStabilityAnalysisTab();
+            app.refreshResultsSummaryPanel();
+            app.refreshResultsTablesTab();
+            app.refreshStreamTables();
+        end
+
+        function onSolveFailure(app, ME)
+            app.stopSolveTimer();
+            app.resultsSummary = struct('status','Solve failed','residual',NaN,'iterations',0, ...
+                'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
+            app.refreshResultsSummaryPanel();
+            app.refreshResultsTablesTab();
+            title(app.ResidualAxes, 'FAILED');
+            logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
+                arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
+            app.updateSolveLogFromSolver(string(logLines));
+            app.writeErrorLog('solve_error', logLines);
+            if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
+                app.setStatus('Non-converged iterate; balances not satisfied.');
+            else
+                app.setStatus('Solve failed — see log (saved to output/logs).');
+            end
+        end
+
+        function updateSolveLogFromSolver(app, lines)
+            vals = cellstr(lines);
+            stride = max(0, round(app.logEveryN));
+            if stride > 0 && ~isempty(vals)
+                idx = 1:stride:numel(vals);
+                vals = vals(idx);
+            end
+            app.LogArea.Value = vals;
+        end
+
+        function runSolver(app)
+            app.syncModelToState();
+            app.SolveController.runSolve();
+            app.syncStateToModel();
         end
 
 
@@ -2261,38 +1934,33 @@ classdef MathLabApp < handle
             app.SolveTimer = [];
         end
 
+
         function refreshResultsTable(app)
-            if isempty(app.ResultsAxes) || ~isvalid(app.ResultsAxes)
-                return;
-            end
+            app.syncModelToState();
+            app.ResultsController.refreshResultsTable();
+            app.syncStateToModel();
+        end
 
-            cla(app.ResultsAxes, 'reset');
-            yyaxis(app.ResultsAxes,'left');
-            yyaxis(app.ResultsAxes,'right');
-            yyaxis(app.ResultsAxes,'left');
-            hold(app.ResultsAxes,'on');
-            grid(app.ResultsAxes,'on');
-            app.ResultsAxes.XScale = app.ResultsXScaleDropDown.Value;
-            app.ResultsAxes.YScale = app.ResultsYScaleDropDown.Value;
+        function refreshResultsSummaryModel(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsSummaryModel();
+            app.syncStateToModel();
+        end
 
-            plotted = false;
-            for idx = 1:4
-                plotted = app.plotResultsConfig(idx) || plotted;
-            end
+        function refreshResultsSummaryPanel(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsSummaryPanel();
+            app.syncStateToModel();
+        end
 
-            if plotted
-                if strcmp(app.ResultsLegendDD.Value,'off')
-                    legend(app.ResultsAxes,'off');
-                else
-                    legend(app.ResultsAxes,'Location',app.ResultsLegendDD.Value);
-                end
-                app.ResultsPlotStatusLabel.Text = sprintf('Snapshots: %d | smoothing: %s(%d)', ...
-                    numel(app.resultsSnapshots), app.ResultsSmoothingDD.Value, round(app.ResultsSmoothWindowField.Value));
-            else
-                app.ResultsPlotStatusLabel.Text = 'No plottable data. Solve first and verify target/variables.';
-            end
-            hold(app.ResultsAxes,'off');
-            app.refreshResultsTargetOptions();
+        function refreshResultsTablesTab(app)
+            app.syncModelToState();
+            app.ResultsController.refreshResultsTablesTab();
+            app.syncStateToModel();
+        end
+
+        function setResultsSummary(app, summary)
+            app.resultsSummary = summary;
         end
 
 
@@ -2764,93 +2432,6 @@ classdef MathLabApp < handle
             end
         end
 
-        function refreshResultsSummaryModel(app)
-            prevResidual = app.resultsSummary.residual;
-            summary = struct('status','Not solved','residual',NaN,'iterations',0, ...
-                'streamKey','-','unitKey','-','streamText','-','unitText','-','deltaText','-');
-            if isempty(app.lastSolver)
-                app.resultsSummary = summary;
-                return;
-            end
-
-            iters = 0;
-            try
-                iters = max(0, numel(app.lastSolver.residualHistory)-1);
-            catch
-                iters = 0;
-            end
-            residual = NaN;
-            try
-                if ~isempty(app.lastSolver.residualHistory)
-                    residual = app.lastSolver.residualHistory(end);
-                end
-            catch
-            end
-            try
-                if app.lastSolver.converged
-                    summary.status = 'Converged';
-                else
-                    summary.status = 'Non-converged';
-                end
-            catch
-                summary.status = 'Solved';
-            end
-            summary.residual = residual;
-            summary.iterations = iters;
-
-            if ~isempty(app.lastFlowsheet) && ~isempty(app.lastFlowsheet.streamDisplayNames)
-                nm = char(string(app.lastFlowsheet.streamDisplayNames{1}));
-                summary.streamKey = nm;
-                sref = app.lastFlowsheet.streamDisplayRefs{1};
-                summary.streamText = sprintf('%s | %s=%.4g | %s=%.4g | %s=%.4g', nm, ...
-                    app.unitLabel('flow','n_dot'), app.fromSI(sref.n_dot,'flow'), ...
-                    app.unitLabel('temperature','T'), app.fromSI(sref.T,'temperature'), ...
-                    app.unitLabel('pressure','P'), app.fromSI(sref.P,'pressure'));
-            end
-
-            if ~isempty(app.lastFlowsheet) && ~isempty(app.lastFlowsheet.units)
-                u = app.lastFlowsheet.units{1};
-                uk = sprintf('U1_%s', app.shortTypeName(u));
-                summary.unitKey = uk;
-                upairs = app.unitObjectResultPairs(u);
-                if isempty(upairs)
-                    summary.unitText = sprintf('%s | no reportable metrics', uk);
-                else
-                    summary.unitText = sprintf('%s | %s: %s', uk, upairs{1,1}, app.formatSpecValue(upairs{1,2}));
-                end
-            end
-
-            if isfinite(prevResidual) && isfinite(summary.residual)
-                d = summary.residual - prevResidual;
-                summary.deltaText = sprintf('Residual delta vs previous run: %+0.3e', d);
-            else
-                summary.deltaText = 'Residual delta vs previous run: n/a';
-            end
-            app.resultsSummary = summary;
-        end
-
-        function refreshResultsSummaryPanel(app)
-            % Update the compact status banner on the Results-Tables tab
-            s = app.resultsSummary;
-
-            if ~isempty(app.ResultsTablesStatusBanner) && isvalid(app.ResultsTablesStatusBanner)
-                statusColor = [0.6 0.1 0.1];
-                if strcmp(s.status, 'Converged'), statusColor = [0.1 0.5 0.1]; end
-                app.ResultsTablesStatusBanner.Text = sprintf('Status: %s', s.status);
-                app.ResultsTablesStatusBanner.FontColor = statusColor;
-            end
-            if ~isempty(app.ResultsTablesResidualLabel) && isvalid(app.ResultsTablesResidualLabel)
-                if isfinite(s.residual)
-                    app.ResultsTablesResidualLabel.Text = sprintf('Residual: %.3e', s.residual);
-                else
-                    app.ResultsTablesResidualLabel.Text = 'Residual: -';
-                end
-            end
-            if ~isempty(app.ResultsTablesIterLabel) && isvalid(app.ResultsTablesIterLabel)
-                app.ResultsTablesIterLabel.Text = sprintf('Iterations: %d', s.iterations);
-            end
-        end
-
         function exportResultsSummaryCsv(app)
             T = table(string(app.resultsSummary.status), app.resultsSummary.residual, app.resultsSummary.iterations, ...
                 string(app.resultsSummary.streamKey), string(app.resultsSummary.streamText), ...
@@ -2930,26 +2511,6 @@ classdef MathLabApp < handle
         function exportResultsUnitCsv(app)
             app.exportUnitTableToOutput('csv');
             app.appendResultsExportLog('Unit table CSV export requested (see status/output folder).');
-        end
-
-        function refreshResultsTablesTab(app)
-            if ~isempty(app.ResultsStreamTable) && isvalid(app.ResultsStreamTable)
-                Ts = app.buildDisplayStreamTable();
-                app.ResultsStreamTable.Data = Ts;
-                app.ResultsStreamTable.ColumnName = Ts.Properties.VariableNames;
-            end
-            if ~isempty(app.ResultsUnitTable) && isvalid(app.ResultsUnitTable)
-                Tu = app.buildUnitResultsTable();
-                app.ResultsUnitTable.Data = Tu;
-                app.ResultsUnitTable.ColumnName = Tu.Properties.VariableNames;
-            end
-            if ~isempty(app.ResultsTablesStatusLabel) && isvalid(app.ResultsTablesStatusLabel)
-                if isempty(app.lastSolver)
-                    app.ResultsTablesStatusLabel.Text = 'Tables show current configured values. Run solve for final solved metrics.';
-                else
-                    app.ResultsTablesStatusLabel.Text = 'Tables refreshed from latest solved state.';
-                end
-            end
         end
 
         function updateStabilityAnalysisTab(app)
@@ -4198,275 +3759,73 @@ classdef MathLabApp < handle
 
         function dialogSplitter(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Flow Splitter', 620, 250, ...
-                {{'Feed stream:','dropdown',sNames,'Stream to split into multiple outlets.'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet stream names (e.g. "S2, S3").'}, ...
-                 {'Spec mode:','text','fractions','"fractions" to specify split fractions, or "flows" to specify outlet flowrates.'}, ...
-                 {'Values:','text','0.5 0.5','One value per outlet stream, in the same order.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                outN=cellfun(@(s)char(string(s.name)),u.outlets,'Uni',false);
-                ctrls{2}.Value=strjoin(outN,', ');
-                if ~isempty(u.splitFractions)
-                    ctrls{3}.Value='fractions';
-                    ctrls{4}.Value=num2str(u.splitFractions);
-                else
-                    ctrls{3}.Value='flows';
-                    ctrls{4}.Value=num2str(u.specifiedOutletFlows);
-                end
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                outNms=strtrim(strsplit(ctrls{2}.Value,','));
-                outS={};
-                for k=1:numel(outNms)
-                    s=app.findStream(outNms{k});
-                    if isempty(s), uialert(d,sprintf('"%s" not found.',outNms{k}),'Error'); return; end
-                    outS{end+1}=s; %#ok
-                end
-                vals=str2num(ctrls{4}.Value); %#ok
-                if numel(vals)~=numel(outS)
-                    uialert(d,'Values length must match number of outlets.','Error'); return;
-                end
-                mode=lower(strtrim(ctrls{3}.Value));
-                def.type='Splitter'; def.inlet=ctrls{1}.Value; def.outlets=outNms;
-                if strcmp(mode,'fractions')
-                    def.splitFractions=vals;
-                    u=proc.units.Splitter(app.findStream(def.inlet),outS,'fractions',vals);
-                else
-                    def.specifiedOutletFlows=vals;
-                    u=proc.units.Splitter(app.findStream(def.inlet),outS,'flows',vals);
-                end
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSplitter(sNames, editIdx);
+            app.syncStateToModel();
         end
 
 
         function dialogSource(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            ns = numel(app.speciesNames);
-            [d, ctrls] = app.makeDialog('Feed Source', 620, 260, ...
-                {{'Outlet stream:','dropdown',sNames,'Stream receiving the feed conditions.'}, ...
-                 {'Total flow (NaN = not specified):','numeric',10,'Overall molar flowrate. Use NaN to leave unspecified.'}, ...
-                 {sprintf('Mole fractions (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Composition in species order. Use NaN to leave unspecified.'}, ...
-                 {sprintf('Component flows (%d values, NaN = skip):',ns),'text',num2str(nan(1,ns)),'Per-species flowrates in species order. Use NaN to leave unspecified.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.outlet.name));
-                ctrls{2}.Value=u.totalFlow;
-                ctrls{3}.Value=num2str(u.composition);
-                ctrls{4}.Value=num2str(u.componentFlows);
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def=struct(); def.type='Source'; def.outlet=ctrls{1}.Value;
-                def.totalFlow=ctrls{2}.Value;
-                def.composition=str2num(ctrls{3}.Value); %#ok
-                def.componentFlows=str2num(ctrls{4}.Value); %#ok
-                opts = struct('totalFlow',def.totalFlow,'composition',def.composition,'componentFlows',def.componentFlows);
-                u=proc.units.Source(app.findStream(def.outlet), opts);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSource(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogSink(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Product Sink', 420, 140, ...
-                {{'Inlet stream:','dropdown',sNames,'Stream consumed by this sink.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx}; ctrls{1}.Value=char(string(u.inlet.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def=struct('type','Sink','inlet',ctrls{1}.Value);
-                u=proc.units.Sink(app.findStream(def.inlet));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogSink(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogDesignSpec(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Design Specification', 620, 230, ...
-                {{'Stream to measure:','dropdown',sNames,'Stream whose property is evaluated.'}, ...
-                 {'Metric:','dropdown',{'total_flow','comp_flow','mole_fraction'},'Which quantity to track.'}, ...
-                 {'Species index:','numeric',1,'Species index (used with comp_flow or mole_fraction).'}, ...
-                 {'Target value:','numeric',0.5,'Desired value that the metric should reach.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.stream.name)); ctrls{2}.Value=u.metric;
-                ctrls{3}.Value=u.componentIndex; ctrls{4}.Value=u.target;
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def=struct('type','DesignSpec','stream',ctrls{1}.Value,'metric',ctrls{2}.Value,...
-                    'componentIndex',ctrls{3}.Value,'target',ctrls{4}.Value);
-                u=proc.units.DesignSpec(app.findStream(def.stream), def.metric, def.target, def.componentIndex);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogDesignSpec(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogAdjust(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Adjust Controller', 640, 280, ...
-                {{'DesignSpec unit index:','numeric',1,'Which DesignSpec unit this controller satisfies.'}, ...
-                 {'Manipulated unit index:','numeric',1,'Which unit''s parameter will be varied.'}, ...
-                 {'Parameter name:','text','beta','Property to adjust (e.g. beta, conversion, duty).'}, ...
-                 {'Parameter index (NaN for scalar):','numeric',NaN,'Use NaN for scalar parameters, or an integer for vector elements.'}, ...
-                 {'Minimum value:','numeric',0,'Lower bound for the adjusted parameter.'}, ...
-                 {'Maximum value:','numeric',1,'Upper bound for the adjusted parameter.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{3}.Value=u.variableField; ctrls{4}.Value=u.variableIndex;
-                ctrls{5}.Value=u.minValue; ctrls{6}.Value=u.maxValue;
-            end
-            app.addDialogButtons(d,@okCb);
-            function okCb()
-                dsIdx=round(ctrls{1}.Value); muIdx=round(ctrls{2}.Value);
-                if dsIdx<1||dsIdx>numel(app.units) || ~isa(app.units{dsIdx},'proc.units.DesignSpec')
-                    uialert(d,'DesignSpec index must refer to an existing DesignSpec unit.','Error'); return;
-                end
-                if muIdx<1||muIdx>numel(app.units)
-                    uialert(d,'Manipulated unit index invalid.','Error'); return;
-                end
-                def=struct('type','Adjust','designSpecIndex',dsIdx,'ownerIndex',muIdx,'field',ctrls{3}.Value,...
-                    'index',ctrls{4}.Value,'minValue',ctrls{5}.Value,'maxValue',ctrls{6}.Value);
-                u=proc.units.Adjust(app.units{dsIdx}, app.units{muIdx}, def.field, def.index, def.minValue, def.maxValue);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogAdjust(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogCalculator(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Stream Calculator', 700, 310, ...
-                {{'Output stream:','dropdown',sNames,'Stream that receives the result.'},{'Output field:','dropdown',{'n_dot','T','P'},'Which property to set on the output stream.'}, ...
-                 {'Input stream A:','dropdown',sNames,'First input stream.'},{'Field A:','dropdown',{'n_dot','T','P'},'Property to read from stream A.'}, ...
-                 {'Operator:','dropdown',{'+' '-' '*' '/'},'Arithmetic operator: result = A op B.'}, ...
-                 {'Input stream B:','dropdown',sNames,'Second input stream.'},{'Field B:','dropdown',{'n_dot','T','P'},'Property to read from stream B.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.lhsOwner.name)); ctrls{2}.Value=u.lhsField;
-                ctrls{3}.Value=char(string(u.aOwner.name)); ctrls{4}.Value=u.aField;
-                ctrls{5}.Value=u.operator;
-                ctrls{6}.Value=char(string(u.bOwner.name)); ctrls{7}.Value=u.bField;
-            end
-            app.addDialogButtons(d,@okCb);
-            function okCb()
-                def=struct('type','Calculator','lhsStream',ctrls{1}.Value,'lhsField',ctrls{2}.Value,...
-                    'aStream',ctrls{3}.Value,'aField',ctrls{4}.Value,'operator',ctrls{5}.Value,...
-                    'bStream',ctrls{6}.Value,'bField',ctrls{7}.Value);
-                u=proc.units.Calculator(app.findStream(def.lhsStream),def.lhsField,...
-                    app.findStream(def.aStream),def.aField,def.operator,...
-                    app.findStream(def.bStream),def.bField);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogCalculator(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogConstraint(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Fixed Constraint', 600, 230, ...
-                {{'Stream:','dropdown',sNames,'Stream to constrain.'},{'Field:','dropdown',{'n_dot','T','P'},'Property to fix at the given value.'}, ...
-                 {'Value:','numeric',1,'Numerical value to enforce.'},{'Index (NaN for scalar):','numeric',NaN,'Use NaN for scalar fields, or an integer for a specific vector element.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.owner.name)); ctrls{2}.Value=u.field;
-                ctrls{3}.Value=u.value; ctrls{4}.Value=u.index;
-            end
-            app.addDialogButtons(d,@okCb);
-            function okCb()
-                def=struct('type','Constraint','stream',ctrls{1}.Value,'field',ctrls{2}.Value,...
-                    'value',ctrls{3}.Value,'index',ctrls{4}.Value);
-                u=proc.units.Constraint(app.findStream(def.stream),def.field,def.value,def.index);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogConstraint(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogRecycle(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Recycle', 500, 170, ...
-                {{'Source stream:','dropdown',sNames,'Computed stream that feeds back.'}, {'Tear stream:','dropdown',sNames,'Tear stream for iterative convergence.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.source.name));
-                ctrls{2}.Value=char(string(u.tear.name));
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Recycle'; def.source=ctrls{1}.Value; def.tear=ctrls{2}.Value;
-                u=proc.units.Recycle(app.findStream(def.source), app.findStream(def.tear));
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogRecycle(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogBypass(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Bypass', 660, 310, ...
-                {{'Feed stream:','dropdown',sNames,'Incoming stream before the split.'}, ...
-                 {'Process inlet:','dropdown',sNames,'Portion sent through the process.'}, ...
-                 {'Bypass stream:','dropdown',sNames,'Portion that skips the process.'}, ...
-                 {'Process return:','dropdown',sNames,'Processed stream returning for mixing.'}, ...
-                 {'Combined outlet:','dropdown',sNames,'Final mixed outlet.'}, ...
-                 {'Bypass fraction (0 to 1):','numeric',0.2,'Fraction of feed sent directly to the bypass.'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                ctrls{1}.Value=char(string(u.inlet.name));
-                ctrls{2}.Value=char(string(u.processInlet.name));
-                ctrls{3}.Value=char(string(u.bypassStream.name));
-                ctrls{4}.Value=char(string(u.processReturn.name));
-                ctrls{5}.Value=char(string(u.outlet.name));
-                ctrls{6}.Value=u.bypassFraction;
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                def.type='Bypass';
-                def.inlet=ctrls{1}.Value; def.processInlet=ctrls{2}.Value;
-                def.bypassStream=ctrls{3}.Value; def.processReturn=ctrls{4}.Value;
-                def.outlet=ctrls{5}.Value; def.bypassFraction=ctrls{6}.Value;
-                u=proc.units.Bypass(app.findStream(def.inlet), app.findStream(def.processInlet), ...
-                    app.findStream(def.bypassStream), app.findStream(def.processReturn), ...
-                    app.findStream(def.outlet), def.bypassFraction);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogBypass(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function dialogManifold(app, sNames, editIdx)
             if nargin<3, editIdx=[]; end
-            [d, ctrls] = app.makeDialog('Routing Manifold', 620, 250, ...
-                {{'Inlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Inlet streams (e.g. "S1, S2").'}, ...
-                 {'Outlet streams (comma-separated):','text',strjoin(sNames(1:min(2,end)),', '),'Outlet streams to connect (e.g. "S3, S4").'}, ...
-                 {'Route vector:','text','1 2','One inlet index per outlet (e.g. "1 2" means outlet 1 gets inlet 1, outlet 2 gets inlet 2).'}});
-            if ~isempty(editIdx)
-                u=app.units{editIdx};
-                inN=cellfun(@(s)char(string(s.name)),u.inlets,'Uni',false);
-                outN=cellfun(@(s)char(string(s.name)),u.outlets,'Uni',false);
-                ctrls{1}.Value=strjoin(inN,', ');
-                ctrls{2}.Value=strjoin(outN,', ');
-                ctrls{3}.Value=num2str(u.route);
-            end
-            app.addDialogButtons(d, @okCb);
-            function okCb()
-                inNms=strtrim(strsplit(ctrls{1}.Value,','));
-                outNms=strtrim(strsplit(ctrls{2}.Value,','));
-                route=str2num(ctrls{3}.Value); %#ok
-                if numel(route)~=numel(outNms)
-                    uialert(d,'Route length must equal number of outlets.','Error'); return;
-                end
-                inS={}; outS={};
-                for k=1:numel(inNms)
-                    s=app.findStream(inNms{k}); if isempty(s), uialert(d,sprintf('"%s" not found.',inNms{k}),'Error'); return; end
-                    inS{end+1}=s; %#ok
-                end
-                for k=1:numel(outNms)
-                    s=app.findStream(outNms{k}); if isempty(s), uialert(d,sprintf('"%s" not found.',outNms{k}),'Error'); return; end
-                    outS{end+1}=s; %#ok
-                end
-                if any(route < 1) || any(route > numel(inS))
-                    uialert(d,'Route indices must reference inlet list.','Error'); return;
-                end
-                def.type='Manifold'; def.inlets=inNms; def.outlets=outNms; def.route=route;
-                u=proc.units.Manifold(inS,outS,route);
-                app.commitUnit(u,def,editIdx); delete(d);
-            end
+            app.syncModelToState();
+            app.UnitsController.dialogManifold(sNames, editIdx);
+            app.syncStateToModel();
         end
 
         function saveConfigDialog(app)
@@ -4528,6 +3887,12 @@ classdef MathLabApp < handle
                 app.projectTitle = 'MathLab_Project';
                 src.Value = app.projectTitle;
             end
+        end
+
+        function onLogEveryNChanged(app, src)
+            val = max(0, round(src.Value));
+            app.logEveryN = val;
+            src.Value = val;
         end
 
         function loadConfigDialog(app)
@@ -4625,6 +3990,12 @@ classdef MathLabApp < handle
             end
             if isfield(cfg,'lastExportPath')
                 app.lastExportPath = char(string(cfg.lastExportPath));
+            end
+            if isfield(cfg,'logEveryN')
+                app.logEveryN = max(0, round(cfg.logEveryN));
+                if ~isempty(app.LogEveryNField) && isvalid(app.LogEveryNField)
+                    app.LogEveryNField.Value = app.logEveryN;
+                end
             end
             app.applyUnitPrefsToControls();
 
@@ -4983,8 +4354,8 @@ classdef MathLabApp < handle
                             fprintf(fid, 'fs.addUnit(proc.units.Constraint(%s, ''%s'', %.6g, %.6g));\n', ...
                                 def.stream, def.field, def.value, def.index);
                         case 'Heater'
-                            fprintf(fid, 'thermoLib = thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = thermo.IdealGasMixture(species, thermoLib);\n');
+                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
+                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
                             args = '';
                             if isfield(def,'Tout'), args = [args, sprintf(', ''Tout'', %.6g', def.Tout)]; end
                             if isfield(def,'duty'), args = [args, sprintf(', ''duty'', %.6g', def.duty)]; end
@@ -4993,8 +4364,8 @@ classdef MathLabApp < handle
                             if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
                             fprintf(fid, 'fs.addUnit(proc.units.Heater(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
                         case 'Cooler'
-                            fprintf(fid, 'thermoLib = thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = thermo.IdealGasMixture(species, thermoLib);\n');
+                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
+                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
                             args = '';
                             if isfield(def,'Tout'), args = [args, sprintf(', ''Tout'', %.6g', def.Tout)]; end
                             if isfield(def,'duty'), args = [args, sprintf(', ''duty'', %.6g', def.duty)]; end
@@ -5003,8 +4374,8 @@ classdef MathLabApp < handle
                             if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
                             fprintf(fid, 'fs.addUnit(proc.units.Cooler(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
                         case 'HeatExchanger'
-                            fprintf(fid, 'thermoLib = thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = thermo.IdealGasMixture(species, thermoLib);\n');
+                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
+                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
                             args = '';
                             if isfield(def,'Th_out'), args = sprintf(', ''Th_out'', %.6g', def.Th_out); end
                             if isfield(def,'Tc_out'), args = sprintf(', ''Tc_out'', %.6g', def.Tc_out); end
@@ -5012,16 +4383,16 @@ classdef MathLabApp < handle
                             fprintf(fid, 'fs.addUnit(proc.units.HeatExchanger(%s, %s, %s, %s, mix%s));\n', ...
                                 def.hotInlet, def.hotOutlet, def.coldInlet, def.coldOutlet, args);
                         case 'Compressor'
-                            fprintf(fid, 'thermoLib = thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = thermo.IdealGasMixture(species, thermoLib);\n');
+                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
+                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
                             args = '';
                             if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
                             if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
                             if isfield(def,'eta'), args = [args, sprintf(', ''eta'', %.6g', def.eta)]; end
                             fprintf(fid, 'fs.addUnit(proc.units.Compressor(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
                         case 'Turbine'
-                            fprintf(fid, 'thermoLib = thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = thermo.IdealGasMixture(species, thermoLib);\n');
+                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
+                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
                             args = '';
                             if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
                             if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
@@ -5164,162 +4535,69 @@ classdef MathLabApp < handle
         end
 
         function runSensitivity(app)
-            app.syncStreamsFromTable();
-            if isempty(app.streams) || isempty(app.units)
-                uialert(app.Fig,'Add streams and units first.','Error'); return;
-            end
-
-            paramChoice = app.SensParamDropDown.Value;
-            vMin = app.SensMinField.Value;
-            vMax = app.SensMaxField.Value;
-            nPts = round(app.SensNptsField.Value);
-            outStreamName = app.SensOutputStreamDD.Value;
-            outFieldStr   = app.SensOutputFieldDD.Value;
-            sensMaxIt = app.SensMaxIterField.Value;
-            sensTol   = app.SensTolField.Value;
-
-            vals = linspace(vMin, vMax, nPts);
-            results = nan(1, nPts);
-
-            origVal = app.getSensParamValue(paramChoice);
-
-            cla(app.SensAxes);
-            app.setStatus('Running sensitivity...');
-            app.SensStatusLabel.Text = sprintf('Running 0/%d ...', nPts);
-            app.SensRunBtn.Enable = 'off';
-            drawnow;
-
-            for p = 1:nPts
-                try
-                    app.applySensParam(paramChoice, vals(p));
-                    fs = app.buildFlowsheet();
-                    fs.solve('maxIter',sensMaxIt,'tolAbs',sensTol,'autoScale',true,'printToConsole',false);
-                    results(p) = app.extractOutput(outStreamName, outFieldStr);
-                catch
-                    results(p) = NaN;
-                end
-                app.SensStatusLabel.Text = sprintf('Running %d/%d ...', p, nPts);
-                drawnow limitrate;
-            end
-
-            if ~isnan(origVal)
-                app.applySensParam(paramChoice, origVal);
-            end
-
-            app.SensRunBtn.Enable = 'on';
-
-            % Clean label for axes
-            paramLabel = strrep(paramChoice, '_', '\_');
-            plot(app.SensAxes, vals, results, '-o', 'LineWidth',1.5, ...
-                'MarkerSize',5, 'Color',[0.2 0.5 0.8]);
-            xlabel(app.SensAxes, paramLabel);
-            ylabel(app.SensAxes, sprintf('%s . %s', outStreamName, strrep(outFieldStr,'_','\_')));
-            title(app.SensAxes, 'Sensitivity Analysis');
-            grid(app.SensAxes, 'on');
-            nConv = sum(~isnan(results));
-            statusMsg = sprintf('Sensitivity: %d/%d converged (maxIter=%d, tol=%.1e).', ...
-                nConv, nPts, sensMaxIt, sensTol);
-            app.SensStatusLabel.Text = statusMsg;
-            app.setStatus(statusMsg);
+            app.syncModelToState();
+            app.SensitivityController.onRunSensitivity();
+            app.syncStateToModel();
         end
 
-        function [unitIdx, fieldName, vecIdx, streamName] = parseSensParam(~, paramChoice)
-            % Parse a sweep parameter string into its components.
-            % Format: "Unit [i] TypeName . field" or "Unit [i] TypeName . field(j)"
-            %     or: "Stream streamName . field" or "Stream streamName . y(j) [species]"
-            unitIdx = []; fieldName = ''; vecIdx = []; streamName = '';
-
-            % Try unit pattern: "Unit [i] ... . fieldName" or "Unit [i] ... . fieldName(j)"
-            tok = regexp(paramChoice, '^Unit \[(\d+)\].*\.\s*(\w+)(?:\((\d+)\))?', 'tokens');
-            if ~isempty(tok)
-                unitIdx = str2double(tok{1}{1});
-                fieldName = tok{1}{2};
-                if numel(tok{1}) >= 3 && ~isempty(tok{1}{3})
-                    vecIdx = str2double(tok{1}{3});
-                end
+        function applySensParam(app, paramChoice, varargin)
+            if numel(varargin) == 1
+                val = varargin{1};
+                app.syncModelToState();
+                app.SensitivityController.applySensParam(paramChoice, val);
+                app.syncStateToModel();
                 return;
             end
 
-            % Try stream pattern: "Stream name . y(j) [species]" or "Stream name . field"
-            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*y\((\d+)\)', 'tokens');
-            if ~isempty(tok)
-                streamName = tok{1}{1};
-                fieldName = 'y';
-                vecIdx = str2double(tok{1}{2});
+            unitIdx = varargin{1};
+            val = varargin{2};
+            if isempty(unitIdx) || unitIdx < 1 || unitIdx > numel(app.units)
                 return;
             end
-            tok = regexp(paramChoice, '^Stream\s+(\S+)\s*\.\s*(\w+)', 'tokens');
-            if ~isempty(tok)
-                streamName = tok{1}{1};
-                fieldName = tok{1}{2};
-                return;
-            end
-        end
-
-        function applySensParam(app, paramChoice, val)
-            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
-            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
-                u = app.units{unitIdx};
-                if ~isempty(vecIdx) && isprop(u, fieldName)
-                    v = u.(fieldName);
-                    v(vecIdx) = val;
-                    u.(fieldName) = v;
-                elseif isprop(u, fieldName)
-                    u.(fieldName) = val;
-                end
-            elseif ~isempty(streamName) && ~isempty(fieldName)
-                s = app.findStream(streamName);
-                if ~isempty(s)
-                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
-                        v = s.y;
-                        v(vecIdx) = val;
-                        s.y = v;
-                    elseif isprop(s, fieldName)
-                        s.(fieldName) = val;
-                    end
+            u = app.units{unitIdx};
+            if contains(paramChoice, 'conversion') && isprop(u, 'conversion')
+                u.conversion = val;
+            elseif contains(paramChoice, 'beta') && isprop(u, 'beta')
+                u.beta = val;
+            elseif contains(paramChoice, 'phi') && isprop(u, 'phi')
+                phi = u.phi;
+                if ~isempty(phi)
+                    phi(:) = val;
+                    u.phi = phi;
                 end
             end
         end
 
-        function val = getSensParamValue(app, paramChoice)
+        function val = getSensParamValue(app, paramChoice, varargin)
+            if isempty(varargin)
+                app.syncModelToState();
+                val = app.SensitivityController.getSensParamValueForApp(paramChoice);
+                app.syncStateToModel();
+                return;
+            end
+
+            unitIdx = varargin{1};
             val = NaN;
-            [unitIdx, fieldName, vecIdx, streamName] = app.parseSensParam(paramChoice);
-            if ~isempty(unitIdx) && unitIdx <= numel(app.units) && ~isempty(fieldName)
-                u = app.units{unitIdx};
-                if isprop(u, fieldName)
-                    try
-                        raw = u.(fieldName);
-                        if ~isempty(vecIdx)
-                            val = raw(vecIdx);
-                        else
-                            val = raw;
-                        end
-                    catch
-                    end
-                end
-            elseif ~isempty(streamName) && ~isempty(fieldName)
-                s = app.findStream(streamName);
-                if ~isempty(s)
-                    if ~isempty(vecIdx) && strcmp(fieldName, 'y')
-                        val = s.y(vecIdx);
-                    elseif isprop(s, fieldName)
-                        val = s.(fieldName);
-                    end
+            if isempty(unitIdx) || unitIdx < 1 || unitIdx > numel(app.units)
+                return;
+            end
+            u = app.units{unitIdx};
+            if contains(paramChoice, 'conversion') && isprop(u, 'conversion')
+                val = u.conversion;
+            elseif contains(paramChoice, 'beta') && isprop(u, 'beta')
+                val = u.beta;
+            elseif contains(paramChoice, 'phi') && isprop(u, 'phi')
+                phi = u.phi;
+                if ~isempty(phi)
+                    val = phi(1);
                 end
             end
         end
 
         function val = extractOutput(app, streamName, fieldStr)
-            s = app.findStream(streamName);
-            if isempty(s), val=NaN; return; end
-            if strcmp(fieldStr,'n_dot'), val=s.n_dot;
-            elseif strcmp(fieldStr,'T'), val=s.T;
-            elseif strcmp(fieldStr,'P'), val=s.P;
-            else
-                tok = regexp(fieldStr,'y\((\d+)\)','tokens');
-                if ~isempty(tok), val=s.y(str2double(tok{1}{1}));
-                else, val=NaN; end
-            end
+            app.syncModelToState();
+            val = app.SensitivityController.extractOutput(streamName, fieldStr);
+            app.syncStateToModel();
         end
     end
 
@@ -5411,8 +4689,8 @@ classdef MathLabApp < handle
             % Build an IdealGasMixture from the current species list.
             % Returns [] if any species is missing from the thermo library.
             try
-                lib = thermo.ThermoLibrary();
-                mix = thermo.IdealGasMixture(app.speciesNames, lib);
+                lib = proc.thermo.ThermoLibrary();
+                mix = proc.thermo.IdealGasMixture(app.speciesNames, lib);
             catch
                 mix = [];
             end
@@ -5522,12 +4800,13 @@ classdef MathLabApp < handle
             cfg.projectTitle = app.projectTitle;
             cfg.unitPrefs = app.unitPrefs;
             cfg.lastExportPath = app.lastExportPath;
+            cfg.logEveryN = app.logEveryN;
 
             app.validateConfigPayload(cfg);
         end
 
         function validateConfigPayload(~, cfg)
-            requiredTop = {'speciesNames','speciesMW','streams','unitDefs','maxIter','tolAbs','projectTitle','unitPrefs','lastExportPath'};
+            requiredTop = {'speciesNames','speciesMW','streams','unitDefs','maxIter','tolAbs','projectTitle','unitPrefs','lastExportPath','logEveryN'};
             for i = 1:numel(requiredTop)
                 key = requiredTop{i};
                 if ~isfield(cfg, key)
@@ -5572,6 +4851,9 @@ classdef MathLabApp < handle
 
             if ~isstruct(cfg.unitPrefs)
                 error('MathLab:SaveConfig:InvalidUnits', 'unitPrefs must be a struct.');
+            end
+            if ~isscalar(cfg.logEveryN) || ~isfinite(cfg.logEveryN) || cfg.logEveryN < 0
+                error('MathLab:SaveConfig:InvalidSolverLog', 'logEveryN must be a finite nonnegative scalar.');
             end
             if ~(ischar(cfg.lastExportPath) || (isstring(cfg.lastExportPath) && isscalar(cfg.lastExportPath)))
                 error('MathLab:SaveConfig:InvalidPath', 'lastExportPath must be a text scalar.');

@@ -18,7 +18,7 @@ classdef Compressor < handle
     properties
         inlet               % proc.Stream
         outlet              % proc.Stream
-        thermoMix           % thermo.IdealGasMixture
+        thermoMix           % proc.thermo.IdealGasMixture
 
         % Specifications (user sets these)
         Pout        double = NaN    % outlet pressure [Pa]

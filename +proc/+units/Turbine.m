@@ -16,7 +16,7 @@ classdef Turbine < handle
     properties
         inlet               % proc.Stream
         outlet              % proc.Stream
-        thermoMix           % thermo.IdealGasMixture
+        thermoMix           % proc.thermo.IdealGasMixture
 
         Pout        double = NaN    % outlet pressure [Pa]
         PR          double = NaN    % expansion ratio Pin/Pout (>1 for expansion)
