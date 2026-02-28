@@ -149,26 +149,10 @@ classdef MathLabApp < handle
         OpenDebugBtn
         LogEveryNField
 
-        % -- Debug popup --
-        DebugFig
-        DebugLevelDD
-        DebugTopNField
-        DebugEveryField
-        DebugEqNamesCheck
-        DebugLogArea
-
-        % -- Unit Table popup --
-        UnitTableFig
-        UnitTable
-        UnitTableStatusLabel
-
-        % -- Stream Table popup --
-        StreamTableFig
-        StreamTable
-        StreamTableStatusLabel
-        StreamExportFormatDD
-        StreamExportFileField
-        StreamExportPathField
+        % -- Popup controllers --
+        debugCtrl
+        unitTablePopupCtrl
+        streamTablePopupCtrl
     end
 
     % =====================================================================
@@ -273,7 +257,7 @@ classdef MathLabApp < handle
                 'prepareSolveRun', @(tol) app.prepareSolveRun(tol), ...
                 'onSolveIter', @(iter,rNorm) app.onSolveIter(iter,rNorm), ...
                 'onSolveLogLine', @(line,lineIdx) app.onSolveLogLine(line,lineIdx), ...
-                'getDebugSettings', @() app.debugSettings, ...
+                'getDebugSettings', @() app.getDebugSettings(), ...
                 'setLastSolver', @(solver) app.setLastSolver(solver), ...
                 'onSolveSuccess', @(solver) app.onSolveSuccess(solver), ...
                 'onSolveFailure', @(ME) app.onSolveFailure(ME)));
@@ -2433,17 +2417,8 @@ classdef MathLabApp < handle
         end
 
         function exportResultsSummaryCsv(app)
-            T = table(string(app.resultsSummary.status), app.resultsSummary.residual, app.resultsSummary.iterations, ...
-                string(app.resultsSummary.streamKey), string(app.resultsSummary.streamText), ...
-                string(app.resultsSummary.unitKey), string(app.resultsSummary.unitText), ...
-                string(app.resultsSummary.deltaText), ...
-                'VariableNames', {'status','final_residual','iterations','key_stream','key_stream_summary', ...
-                'key_unit','key_unit_summary','delta_note'});
-            outDir = app.resolveInitialExportPath();
-            filepath = fullfile(outDir, app.autoFileName('results_summary', 'csv'));
-            writetable(T, filepath);
-            app.setStatus(sprintf('Results summary exported to %s', filepath));
-            app.appendResultsExportLog(sprintf('Results summary exported: %s', filepath));
+            ui.ResultsExporter.exportSummaryCsv(app.resultsSummary, app.projectTitle);
+            app.setStatus('Results summary CSV exported.');
         end
 
         function exportResultsSnapshotsCsv(app)
@@ -2646,7 +2621,7 @@ classdef MathLabApp < handle
         end
 
         function txt = ternary(~, cond, a, b) %#ok<INUSL>
-            if cond, txt = a; else, txt = b; end
+            txt = ui.AppUtils.ternary(cond, a, b);
         end
 
         function appendResultsExportLog(~, ~)
@@ -2696,255 +2671,38 @@ classdef MathLabApp < handle
         end
 
         function exportResultsFigure(app)
-            if isempty(app.ResultsAxes) || ~isvalid(app.ResultsAxes)
-                return;
-            end
-            outDir = fullfile(pwd, 'output');
-            if ~exist(outDir, 'dir')
-                mkdir(outDir);
-            end
-            stamp = datestr(now, 'yyyymmdd_HHMMSS');
-            outFile = fullfile(outDir, sprintf('%s_results_plot_%s.png', app.projectTitle, stamp));
-            try
-                exportgraphics(app.ResultsAxes, outFile, 'Resolution', 150);
-                app.setStatus(sprintf('Results plot exported: %s', outFile));
-            catch
-                app.setStatus('Failed to export results figure.');
-            end
+            ui.ResultsExporter.exportFigure(app.ResultsAxes, app.projectTitle);
+            app.setStatus('Results plot exported.');
         end
 
     end
 
 
     % =====================================================================
-    %  DEBUG TOOLS POPUP
+    %  DEBUG TOOLS POPUP  (delegated to ui.DebugController)
     % =====================================================================
     methods (Access = private)
         function openDebugPopup(app)
-            if ~isempty(app.DebugFig) && isvalid(app.DebugFig)
-                app.DebugFig.Visible = 'on';
-                return;
+            if isempty(app.debugCtrl)
+                app.debugCtrl = ui.DebugController( ...
+                    @() app.lastSolver, ...
+                    @() app.buildFlowsheet(), ...
+                    @() app.openUnitTablePopup());
             end
-
-            app.DebugFig = uifigure('Name','MathLab — Debug Tools', ...
-                'Position',[150 120 620 520], 'Color',[0.97 0.97 0.98]);
-            app.DebugFig.CloseRequestFcn = @(src,~) app.onDebugPopupClosed(src);
-
-            gl = uigridlayout(app.DebugFig, [4 1], ...
-                'RowHeight',{28, 'fit', 'fit', '1x'}, 'Padding',[10 10 10 10], 'RowSpacing',8);
-
-            uilabel(gl, 'Text','Debug & Diagnostics', 'FontWeight','bold', 'FontSize',14);
-
-            % --- Solver debug settings ---
-            solverP = uipanel(gl, 'Title','Solver Debug Settings', 'FontWeight','bold');
-            sg = uigridlayout(solverP, [4 4], 'ColumnWidth',{'fit','1x','fit','1x'}, ...
-                'RowHeight',{28,28,28,28}, 'Padding',[8 8 8 8], 'RowSpacing',4, 'ColumnSpacing',8);
-
-            uilabel(sg,'Text','Debug level:','FontWeight','bold');
-            app.DebugLevelDD = uidropdown(sg, 'Items',{'0 — off','1 — summary','2 — top residuals','3 — periodic'}, 'Value','0 — off');
-            uilabel(sg,'Text','Top N equations:','FontWeight','bold');
-            app.DebugTopNField = uieditfield(sg, 'numeric', 'Value',10, 'Limits',[1 100], 'RoundFractionalValues','on');
-
-            uilabel(sg,'Text','Print every N iters:','FontWeight','bold');
-            app.DebugEveryField = uieditfield(sg, 'numeric', 'Value',0, 'Limits',[0 10000], 'RoundFractionalValues','on');
-            uilabel(sg,'Text','Show eq. labels:','FontWeight','bold');
-            app.DebugEqNamesCheck = uicheckbox(sg, 'Text','', 'Value',true);
-
-            uilabel(sg,'Text','');
-            uilabel(sg,'Text','');
-            uilabel(sg,'Text','');
-            applyBtn = uibutton(sg, 'push', 'Text','Apply to Next Solve', ...
-                'FontWeight','bold', 'BackgroundColor',[0.88 0.93 0.85], ...
-                'ButtonPushedFcn',@(~,~) app.applyDebugSettings());
-
-            % --- Diagnostic actions ---
-            actionsP = uipanel(gl, 'Title','Diagnostic Actions', 'FontWeight','bold');
-            ag = uigridlayout(actionsP, [2 3], 'ColumnWidth',{'1x','1x','1x'}, ...
-                'RowHeight',{30,30}, 'Padding',[8 8 8 8], 'RowSpacing',4, 'ColumnSpacing',8);
-
-            uibutton(ag, 'push', 'Text','Show Jacobian Sparsity', ...
-                'ButtonPushedFcn',@(~,~) app.debugShowJacobianSparsity());
-            uibutton(ag, 'push', 'Text','Show Worst Residuals', ...
-                'ButtonPushedFcn',@(~,~) app.debugShowWorstResiduals());
-            uibutton(ag, 'push', 'Text','Show DOF Analysis', ...
-                'ButtonPushedFcn',@(~,~) app.debugShowDOF());
-            uibutton(ag, 'push', 'Text','Dump Solver State', ...
-                'ButtonPushedFcn',@(~,~) app.debugDumpSolverState());
-            uibutton(ag, 'push', 'Text','Show Pole Summary', ...
-                'ButtonPushedFcn',@(~,~) app.debugShowPoles());
-            uibutton(ag, 'push', 'Text','Open Unit Table', ...
-                'ButtonPushedFcn',@(~,~) app.openUnitTablePopup());
-
-            % --- Log area ---
-            app.DebugLogArea = uitextarea(gl, 'Editable','off', ...
-                'FontName','Consolas', 'FontSize',11, ...
-                'Value',{'Debug output will appear here.'; ''; 'Use the actions above or apply debug settings before solving.'});
-        end
-
-        function onDebugPopupClosed(app, src)
-            if ~isempty(src) && isvalid(src)
-                delete(src);
-            end
-            app.DebugFig = [];
-        end
-
-        function applyDebugSettings(app)
-            levelStr = app.DebugLevelDD.Value;
-            level = str2double(levelStr(1));
-            topN = round(app.DebugTopNField.Value);
-            every = round(app.DebugEveryField.Value);
-            eqNames = app.DebugEqNamesCheck.Value;
-
-            % Store for next solve
-            app.debugSettings = struct('debugLevel',level,'debugTopN',topN, ...
-                'debugEvery',every,'debugEqNames',eqNames);
-
-            msg = sprintf('Debug settings applied: level=%d, topN=%d, every=%d, eqNames=%s', ...
-                level, topN, every, app.ternary(eqNames, 'on', 'off'));
-            app.appendDebugLog(msg);
+            app.debugCtrl.openPopup();
         end
 
         function appendDebugLog(app, msg)
-            if isempty(app.DebugLogArea) || ~isvalid(app.DebugLogArea)
-                return;
-            end
-            vals = app.DebugLogArea.Value;
-            if ischar(vals), vals = {vals}; end
-            ts = datestr(now, 'HH:MM:SS');
-            vals{end+1} = sprintf('[%s] %s', ts, msg);
-            if numel(vals) > 100
-                vals = vals(end-99:end);
-            end
-            app.DebugLogArea.Value = vals;
-        end
-
-        function debugShowJacobianSparsity(app)
-            if isempty(app.lastSolver)
-                app.appendDebugLog('No solver available. Run solve first.');
-                return;
-            end
-            try
-                st = app.lastSolver.localStabilityProxy();
-                J = st.J;
-                nz = nnz(abs(J) > 1e-15);
-                tot = numel(J);
-                density = nz / max(1,tot) * 100;
-                app.appendDebugLog(sprintf('Jacobian: %dx%d, %d non-zero (%.1f%% density)', ...
-                    size(J,1), size(J,2), nz, density));
-                app.appendDebugLog(sprintf('  Condition number: %.3e', cond(J)));
-                app.appendDebugLog(sprintf('  Rank: %d / %d', rank(J), min(size(J))));
-            catch ME
-                app.appendDebugLog(sprintf('Jacobian analysis failed: %s', ME.message));
+            if ~isempty(app.debugCtrl)
+                app.debugCtrl.appendLog(msg);
             end
         end
 
-        function debugShowWorstResiduals(app)
-            if isempty(app.lastSolver)
-                app.appendDebugLog('No solver available. Run solve first.');
-                return;
-            end
-            try
-                sv = app.lastSolver;
-                app.appendDebugLog(sprintf('--- Residual Summary ---'));
-                app.appendDebugLog(sprintf('  Final residual: %.4e', sv.finalResidual));
-                if ~isempty(sv.residualHistory)
-                    rh = sv.residualHistory(isfinite(sv.residualHistory));
-                    app.appendDebugLog(sprintf('  Residual history: %d points', numel(rh)));
-                    app.appendDebugLog(sprintf('  Initial: %.4e | Final: %.4e', rh(1), rh(end)));
-                    if numel(rh) >= 2
-                        ratio = rh(end) / max(rh(1), eps);
-                        app.appendDebugLog(sprintf('  Reduction ratio: %.4e', ratio));
-                    end
-                end
-                if ~isempty(sv.weightedResidualHistory)
-                    wrh = sv.weightedResidualHistory(isfinite(sv.weightedResidualHistory));
-                    if ~isempty(wrh)
-                        app.appendDebugLog(sprintf('  Final weighted residual: %.4e', wrh(end)));
-                    end
-                end
-            catch ME
-                app.appendDebugLog(sprintf('Residual analysis failed: %s', ME.message));
-            end
-        end
-
-        function debugShowDOF(app)
-            try
-                fs = app.buildFlowsheet();
-                [nEq, nUnk, dof] = fs.checkDOF();
-                app.appendDebugLog(sprintf('DOF Analysis: %d equations, %d unknowns, DOF=%d', nEq, nUnk, dof));
-                if dof == 0
-                    app.appendDebugLog('  System is exactly determined.');
-                elseif dof > 0
-                    app.appendDebugLog(sprintf('  Under-specified by %d (need more specs).', dof));
-                else
-                    app.appendDebugLog(sprintf('  Over-specified by %d (too many specs).', abs(dof)));
-                end
-            catch ME
-                app.appendDebugLog(sprintf('DOF analysis failed: %s', ME.message));
-            end
-        end
-
-        function debugDumpSolverState(app)
-            if isempty(app.lastSolver)
-                app.appendDebugLog('No solver available. Run solve first.');
-                return;
-            end
-            try
-                sv = app.lastSolver;
-                app.appendDebugLog('--- Solver State Dump ---');
-                app.appendDebugLog(sprintf('  Converged: %s', app.ternary(sv.converged,'yes','no')));
-                app.appendDebugLog(sprintf('  Exit flag: %s', sv.exitFlag));
-                app.appendDebugLog(sprintf('  Final residual: %.4e', sv.finalResidual));
-                app.appendDebugLog(sprintf('  Iterations: %d', numel(sv.residualHistory)-1));
-                try
-                    st = sv.localStabilityProxy();
-                    app.appendDebugLog(sprintf('  Unknowns: %d', st.nUnknowns));
-                    app.appendDebugLog(sprintf('  Equations: %d', st.nEquations));
-                catch
-                    app.appendDebugLog('  Unknowns/Equations: unavailable');
-                end
-                if ~isempty(sv.residualHistory)
-                    app.appendDebugLog(sprintf('  Residual range: [%.3e, %.3e]', ...
-                        min(sv.residualHistory(isfinite(sv.residualHistory))), ...
-                        max(sv.residualHistory(isfinite(sv.residualHistory)))));
-                end
-                % Save full dump to output
-                outDir = fullfile(pwd, 'output');
-                if ~exist(outDir, 'dir'), mkdir(outDir); end
-                stamp = datestr(now, 'yyyymmdd_HHMMSS');
-                outFile = fullfile(outDir, sprintf('debug_dump_%s.mat', stamp));
-                solver = app.lastSolver; %#ok<PROPLC>
-                save(outFile, 'solver');
-                app.appendDebugLog(sprintf('  Full dump saved: %s', outFile));
-            catch ME
-                app.appendDebugLog(sprintf('Dump failed: %s', ME.message));
-            end
-        end
-
-        function debugShowPoles(app)
-            if isempty(app.lastSolver)
-                app.appendDebugLog('No solver available. Run solve first.');
-                return;
-            end
-            try
-                st = app.lastSolver.localStabilityProxy();
-                poles = st.poles;
-                nStable = sum(real(poles) < 0);
-                nUnstable = sum(real(poles) >= 0);
-                app.appendDebugLog(sprintf('--- Pole Summary (%d total) ---', numel(poles)));
-                app.appendDebugLog(sprintf('  Stable: %d | Unstable: %d', nStable, nUnstable));
-                app.appendDebugLog(sprintf('  Max Re(pole): %.4e', st.maxReal));
-                app.appendDebugLog(sprintf('  Min Re(pole): %.4e', st.minReal));
-                % Show 5 most unstable
-                [~, idx] = sort(real(poles), 'descend');
-                topN = min(5, numel(poles));
-                app.appendDebugLog(sprintf('  Top %d most unstable:', topN));
-                for i = 1:topN
-                    p = poles(idx(i));
-                    app.appendDebugLog(sprintf('    %+.4e %+.4ej', real(p), imag(p)));
-                end
-            catch ME
-                app.appendDebugLog(sprintf('Pole analysis failed: %s', ME.message));
+        function s = getDebugSettings(app)
+            if ~isempty(app.debugCtrl)
+                s = app.debugCtrl.getSettings();
+            else
+                s = app.debugSettings;
             end
         end
     end
@@ -2954,496 +2712,70 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = private)
         function openUnitTablePopup(app)
-            if ~isempty(app.UnitTableFig) && isvalid(app.UnitTableFig)
-                app.refreshUnitTablePopup();
-            app.refreshStreamTablePopup();
-            app.refreshResultsTablesTab();
-                app.UnitTableFig.Visible = 'on';
-                return;
+            if isempty(app.unitTablePopupCtrl)
+                deps = struct( ...
+                    'getLastSolver', @() app.lastSolver, ...
+                    'getLastFlowsheet', @() app.lastFlowsheet, ...
+                    'getUnits', @() app.units, ...
+                    'getUnitDefs', @() app.unitDefs, ...
+                    'getSpeciesNames', @() app.speciesNames, ...
+                    'getUnitPrefs', @() app.unitPrefs, ...
+                    'getProjectTitle', @() app.projectTitle, ...
+                    'setStatusFcn', @(msg) app.setStatus(msg), ...
+                    'refreshStreamTablePopupFcn', @() app.refreshStreamTablePopup(), ...
+                    'refreshResultsTablesTabFcn', @() app.refreshResultsTablesTab());
+                app.unitTablePopupCtrl = ui.UnitTablePopup(deps);
             end
-
-            app.UnitTableFig = uifigure('Name','MathLab — Unit Results Table', ...
-                'Position',[120 80 980 480], 'Color',[0.97 0.97 0.98]);
-            app.UnitTableFig.CloseRequestFcn = @(src,~) app.onUnitTablePopupClosed(src);
-
-            gl = uigridlayout(app.UnitTableFig, [3 1], ...
-                'RowHeight',{34,'1x',32}, 'Padding',[10 10 10 10], 'RowSpacing',6);
-
-            topG = uigridlayout(gl, [1 4], 'ColumnWidth',{'fit','1x',110,110}, ...
-                'Padding',[0 0 0 0], 'ColumnSpacing',6);
-            topG.Layout.Row = 1;
-            uilabel(topG, 'Text','Unit Results Table (Read-only)', 'FontWeight','bold', 'FontSize',13);
-            uilabel(topG, 'Text','Type + connected streams + solved metrics (duty/power/conversion) are flattened for quick review.', ...
-                'FontColor',[0.35 0.35 0.35]);
-            uibutton(topG, 'push', 'Text','Export CSV', ...
-                'ButtonPushedFcn',@(~,~) app.exportUnitTableToOutput('csv'));
-            uibutton(topG, 'push', 'Text','Export MAT', ...
-                'ButtonPushedFcn',@(~,~) app.exportUnitTableToOutput('mat'));
-
-            app.UnitTable = uitable(gl, ...
-                'ColumnEditable', false(1,9), ...
-                'ColumnName', {'Unit #','Type','Connected Streams', ...
-                               'Spec 1 Label','Spec 1 Value', ...
-                               'Spec 2 Label','Spec 2 Value', ...
-                               'Spec 3 Label','Spec 3 Value'});
-            app.UnitTable.Layout.Row = 2;
-
-            app.UnitTableStatusLabel = uilabel(gl, 'Text','', 'FontColor',[0.3 0.3 0.3]);
-            app.UnitTableStatusLabel.Layout.Row = 3;
-
-            app.refreshUnitTablePopup();
-            app.refreshStreamTablePopup();
-            app.refreshResultsTablesTab();
-        end
-
-        function onUnitTablePopupClosed(app, src)
-            if ~isempty(src) && isvalid(src)
-                delete(src);
-            end
-            app.UnitTableFig = [];
-            app.UnitTable = [];
-            app.UnitTableStatusLabel = [];
+            app.unitTablePopupCtrl.open();
         end
 
         function refreshUnitTablePopup(app)
-            if isempty(app.UnitTable) || ~isvalid(app.UnitTable)
-                return;
-            end
-            T = app.buildUnitResultsTable();
-            app.UnitTable.Data = T;
-            app.UnitTable.ColumnName = T.Properties.VariableNames;
-            if isempty(T)
-                status = 'No units defined yet.';
-            elseif isempty(app.lastSolver) || isempty(app.lastFlowsheet)
-                status = sprintf('%d unit(s). Showing configured values. Run Solve for calculated metrics.', height(T));
-            else
-                status = sprintf('%d unit(s). Read-only simulation view with solved metrics.', height(T));
-            end
-            if ~isempty(app.UnitTableStatusLabel) && isvalid(app.UnitTableStatusLabel)
-                app.UnitTableStatusLabel.Text = status;
+            if ~isempty(app.unitTablePopupCtrl)
+                app.unitTablePopupCtrl.refresh();
             end
         end
 
         function T = buildUnitResultsTable(app)
-            if ~isempty(app.lastFlowsheet) && isprop(app.lastFlowsheet, 'units')
-                T = app.buildUnitTableFromObjects(app.lastFlowsheet.units);
+            if ~isempty(app.unitTablePopupCtrl)
+                T = app.unitTablePopupCtrl.buildResultsTable();
+            elseif ~isempty(app.lastFlowsheet) && isprop(app.lastFlowsheet, 'units')
+                T = ui.UnitTablePopup.buildTableFromObjects(app.lastFlowsheet.units, app.unitPrefs);
             elseif ~isempty(app.units)
-                T = app.buildUnitTableFromObjects(app.units);
+                T = ui.UnitTablePopup.buildTableFromObjects(app.units, app.unitPrefs);
             else
-                T = app.buildUnitTable();
+                T = ui.UnitTablePopup.buildTableFromDefs(app.unitDefs, app.unitPrefs);
             end
         end
 
-        function T = buildUnitTableFromObjects(app, units)
-            n = numel(units);
-            cols = {'Unit_Index','Type','Connected_Streams', ...
-                    'Result1_Label','Result1_Value','Result2_Label','Result2_Value','Result3_Label','Result3_Value'};
-            if n == 0
-                T = cell2table(cell(0, numel(cols)), 'VariableNames', cols);
-                return;
+        function exportUnitTableToOutput(app, fmt)
+            if isempty(app.unitTablePopupCtrl)
+                app.openUnitTablePopup();
             end
-            data = cell(n, numel(cols));
-            for i = 1:n
-                data(i,:) = app.serializeUnitObjectRow(i, units{i});
-            end
-            T = cell2table(data, 'VariableNames', cols);
-        end
-
-        function row = serializeUnitObjectRow(app, idx, u)
-            row = {idx, app.shortTypeName(u), '-', '-', '-', '-', '-', '-', '-'};
-            row{3} = app.unitObjectConnectedStreams(u);
-            pairs = app.unitObjectResultPairs(u);
-            for k = 1:min(3,size(pairs,1))
-                row{3 + (k-1)*2 + 1} = pairs{k,1};
-                row{3 + (k-1)*2 + 2} = pairs{k,2};
-            end
-        end
-
-        function streamText = unitObjectConnectedStreams(app, u)
-            names = {};
-            if ismethod(u, 'streamNames')
-                try
-                    names = u.streamNames();
-                catch
-                    names = {};
-                end
-            end
-            if isempty(names)
-                streamText = '-';
-            else
-                streamText = app.formatSpecValue(names);
-            end
-        end
-
-        function pairs = unitObjectResultPairs(app, u)
-            pairs = {};
-            cn = class(u);
-            if contains(cn,'HeatExchanger')
-                pairs = {app.unitLabel('duty','Duty'), app.safeMethodValue(u,'getDuty','duty'); ...
-                         app.unitLabel('temperature','Hot Tout'), app.safePropValue(u,'hotOutlet','T','temperature'); ...
-                         app.unitLabel('temperature','Cold Tout'), app.safePropValue(u,'coldOutlet','T','temperature')};
-            elseif contains(cn,'Heater') || contains(cn,'Cooler')
-                pairs = {app.unitLabel('duty','Duty'), app.safeMethodValue(u,'getDuty','duty'); ...
-                         app.unitLabel('temperature','Tin'), app.safePropValue(u,'inlet','T','temperature'); ...
-                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
-            elseif contains(cn,'Compressor') || contains(cn,'Turbine')
-                pairs = {app.unitLabel('power','Power'), app.safeMethodValue(u,'getPower','power'); ...
-                         'Pressure ratio', app.safePressureRatio(u); ...
-                         'Eta', app.safeSimpleProp(u,'eta')};
-            elseif contains(cn,'StoichiometricReactor')
-                pairs = {'Extent', app.safeSimpleProp(u,'extent'); ...
-                         'Extent mode', app.safeSimpleProp(u,'extentMode'); ...
-                         'Ref species', app.safeSimpleProp(u,'referenceSpecies')};
-            elseif contains(cn,'EquilibriumReactor')
-                pairs = {'Keq', app.safeSimpleProp(u,'Keq'); ...
-                         'Ref species', app.safeSimpleProp(u,'referenceSpecies'); ...
-                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
-            elseif contains(cn,'ConversionReactor') || contains(cn,'YieldReactor') || contains(cn,'Reactor')
-                pairs = {'Conversion', app.safeSimpleProp(u,'conversion'); ...
-                         app.unitLabel('temperature','Tin'), app.safePropValue(u,'inlet','T','temperature'); ...
-                         app.unitLabel('temperature','Tout'), app.safePropValue(u,'outlet','T','temperature')};
-            elseif contains(cn,'Separator')
-                pairs = {'Split phi', app.safeSimpleProp(u,'phi')};
-            elseif contains(cn,'Purge')
-                pairs = {'Purge beta', app.safeSimpleProp(u,'beta')};
-            else
-                pairs = {'Description', app.safeDescribe(u)};
-            end
-        end
-
-        function val = safeMethodValue(app, u, m, quantity)
-            try
-                if ismethod(u,m)
-                    raw = u.(m)();
-                    if nargin >= 4 && ~isempty(quantity)
-                        raw = app.fromSI(raw, quantity);
-                    end
-                    val = app.formatSpecValue(raw);
-                else
-                    val = '-';
-                end
-            catch
-                val = '-';
-            end
-        end
-
-        function val = safeSimpleProp(app, u, p)
-            try
-                if isprop(u,p)
-                    val = app.formatSpecValue(u.(p));
-                else
-                    val = '-';
-                end
-            catch
-                val = '-';
-            end
-        end
-
-        function val = safePropValue(app, u, ownerProp, fieldProp, quantity)
-            try
-                if isprop(u, ownerProp)
-                    owner = u.(ownerProp);
-                    if isprop(owner, fieldProp)
-                        raw = owner.(fieldProp);
-                        if nargin >= 5 && ~isempty(quantity)
-                            raw = app.fromSI(raw, quantity);
-                        end
-                        val = app.formatSpecValue(raw);
-                        return;
-                    end
-                end
-            catch
-            end
-            val = '-';
-        end
-
-        function val = safePressureRatio(app, u)
-            try
-                if isprop(u,'PR') && isfinite(u.PR)
-                    val = app.formatSpecValue(u.PR);
-                    return;
-                end
-                if isprop(u,'inlet') && isprop(u,'outlet')
-                    p1 = u.inlet.P;
-                    p2 = u.outlet.P;
-                    if isfinite(p1) && p1 ~= 0 && isfinite(p2)
-                        val = app.formatSpecValue(p2/p1);
-                        return;
-                    end
-                end
-            catch
-            end
-            val = '-';
-        end
-
-        function txt = safeDescribe(~, u)
-            try
-                if ismethod(u,'describe')
-                    txt = char(string(u.describe()));
-                else
-                    txt = class(u);
-                end
-            catch
-                txt = class(u);
-            end
-        end
-
-        function T = buildUnitTable(app)
-            n = numel(app.unitDefs);
-            cols = {'Unit_Index','Type','Connected_Streams', ...
-                    'Spec1_Label','Spec1_Value','Spec2_Label','Spec2_Value','Spec3_Label','Spec3_Value'};
-            if n == 0
-                T = cell2table(cell(0, numel(cols)), 'VariableNames', cols);
-                return;
-            end
-            data = cell(n, numel(cols));
-            for i = 1:n
-                data(i,:) = app.serializeUnitDefRow(i, app.unitDefs{i});
-            end
-            T = cell2table(data, 'VariableNames', cols);
-        end
-
-        function row = serializeUnitDefRow(app, idx, def)
-            row = {idx, '-', '-', '-', '-', '-', '-', '-', '-'};
-            if ~isstruct(def) || ~isfield(def,'type')
-                return;
-            end
-            typ = char(string(def.type));
-            row{2} = typ;
-            row{3} = app.unitConnectedStreams(def);
-
-            specs = app.unitSpecPairs(def);
-            for k = 1:min(3,size(specs,1))
-                row{3 + (k-1)*2 + 1} = specs{k,1};
-                row{3 + (k-1)*2 + 2} = specs{k,2};
-            end
-        end
-
-        function streamText = unitConnectedStreams(app, def)
-            parts = {};
-            fSingle = {'inlet','outlet','source','tear','stream','recycle','purge','outletA','outletB', ...
-                'processInlet','bypassStream','processReturn','hotInlet','hotOutlet','coldInlet','coldOutlet', ...
-                'lhsStream','aStream','bStream'};
-            for i = 1:numel(fSingle)
-                f = fSingle{i};
-                if isfield(def,f)
-                    parts{end+1} = sprintf('%s=%s', f, app.formatSpecValue(def.(f))); %#ok<AGROW>
-                end
-            end
-            if isfield(def,'inlets')
-                parts{end+1} = sprintf('inlets=%s', app.formatSpecValue(def.inlets)); %#ok<AGROW>
-            end
-            if isfield(def,'outlets')
-                parts{end+1} = sprintf('outlets=%s', app.formatSpecValue(def.outlets)); %#ok<AGROW>
-            end
-            if isempty(parts)
-                streamText = '-';
-            else
-                streamText = strjoin(parts, ' | ');
-            end
-        end
-
-        function specs = unitSpecPairs(app, def)
-            specs = {};
-            typ = char(string(def.type));
-            switch typ
-                case 'Mixer'
-                    specs = {'No. inlets', app.formatSpecValue(numel(def.inlets)); 'Outlet', app.formatSpecValue(def.outlet)};
-                case 'Heater'
-                    specs = {app.unitLabel('temperature','Tout'), app.getDefField(def,'Tout','temperature'); app.unitLabel('duty','Qdot'), app.getDefField(def,'duty','duty'); 'dP/Pout/PR', app.getDefField(def,'dP','pressure')};
-                    if ischar(specs{3,2}) && strcmp(specs{3,2},'-')
-                        specs{3,2} = app.getDefField(def,'Pout','pressure');
-                        if ischar(specs{3,2}) && strcmp(specs{3,2},'-')
-                            specs{3,2} = app.getDefField(def,'PR');
-                        end
-                    end
-                case 'Cooler'
-                    specs = {app.unitLabel('temperature','Tout'), app.getDefField(def,'Tout','temperature'); app.unitLabel('duty','Qdot'), app.getDefField(def,'duty','duty'); 'dP/Pout/PR', app.getDefField(def,'dP','pressure')};
-                    if ischar(specs{3,2}) && strcmp(specs{3,2},'-')
-                        specs{3,2} = app.getDefField(def,'Pout','pressure');
-                        if ischar(specs{3,2}) && strcmp(specs{3,2},'-')
-                            specs{3,2} = app.getDefField(def,'PR');
-                        end
-                    end
-                case 'Compressor'
-                    specs = {'Pressure ratio', app.getDefField(def,'PR'); 'Efficiency', app.getDefField(def,'eta')};
-                case 'Turbine'
-                    specs = {'Pressure ratio', app.getDefField(def,'PR'); 'Efficiency', app.getDefField(def,'eta')};
-                case 'Reactor'
-                    specs = {'Conversion', app.getDefField(def,'conversion'); 'Reactions', app.getDefField(def,'reactions')};
-                case 'ConversionReactor'
-                    specs = {'Key species', app.getDefField(def,'keySpecies'); 'Conversion', app.getDefField(def,'conversion'); 'Mode', app.getDefField(def,'conversionMode')};
-                case 'StoichiometricReactor'
-                    specs = {'Extent', app.getDefField(def,'extent'); 'Mode', app.getDefField(def,'extentMode'); 'Ref species', app.getDefField(def,'referenceSpecies')};
-                case 'YieldReactor'
-                    specs = {'Basis species', app.getDefField(def,'basisSpecies'); 'Conversion', app.getDefField(def,'conversion'); 'Products', app.getDefField(def,'productSpecies')};
-                case 'EquilibriumReactor'
-                    specs = {'Keq', app.getDefField(def,'Keq'); 'Ref species', app.getDefField(def,'referenceSpecies'); 'Stoich nu', app.getDefField(def,'nu')};
-                case 'Separator'
-                    specs = {'Split phi', app.getDefField(def,'phi')};
-                case 'Purge'
-                    specs = {'Purge beta', app.getDefField(def,'beta')};
-                case 'Splitter'
-                    if isfield(def,'splitFractions')
-                        specs = {'Mode', 'fractions'; 'Values', app.getDefField(def,'splitFractions')};
-                    else
-                        specs = {'Mode', 'flows'; 'Values', app.getDefField(def,'specifiedOutletFlows')};
-                    end
-                case 'Bypass'
-                    specs = {'Bypass fraction', app.getDefField(def,'bypassFraction')};
-                case 'Manifold'
-                    specs = {'Route', app.getDefField(def,'route')};
-                case 'Source'
-                    specs = {app.unitLabel('flow','Total flow'), app.getDefField(def,'totalFlow','flow'); 'Composition', app.getDefField(def,'composition'); app.unitLabel('flow','Comp flows'), app.getDefField(def,'componentFlows','flow')};
-                case 'DesignSpec'
-                    specs = {'Metric', app.getDefField(def,'metric'); 'Target', app.getDefField(def,'target'); 'Species idx', app.getDefField(def,'speciesIndex')};
-                case 'Adjust'
-                    specs = {'Field', app.getDefField(def,'field'); 'Index', app.getDefField(def,'index'); 'Bounds', sprintf('[%s, %s]', app.getDefField(def,'minValue'), app.getDefField(def,'maxValue'))};
-                case 'Calculator'
-                    specs = {'LHS field', app.getDefField(def,'lhsField'); 'Operator', app.getDefField(def,'operator'); 'RHS fields', sprintf('%s %s %s', app.getDefField(def,'aField'), app.getDefField(def,'operator'), app.getDefField(def,'bField'))};
-                case 'Constraint'
-                    specs = {'Field', app.getDefField(def,'field'); 'Value', app.getDefField(def,'value'); 'Index', app.getDefField(def,'index')};
-                otherwise
-                    specs = {'Spec struct fields', app.formatSpecValue(fieldnames(def)')};
-            end
-        end
-
-        function val = getDefField(app, def, fld, quantity)
-            if nargin < 4
-                quantity = '';
-            end
-            if isfield(def, fld)
-                raw = def.(fld);
-                if ~isempty(quantity)
-                    raw = app.fromSI(raw, quantity);
-                end
-                val = app.formatSpecValue(raw);
-            else
-                val = '-';
-            end
+            app.unitTablePopupCtrl.exportToOutput(fmt);
         end
 
         function txt = formatSpecValue(~, val)
-            if ischar(val)
-                txt = val;
-            elseif isstring(val)
-                txt = char(val);
-            elseif isnumeric(val) || islogical(val)
-                if isscalar(val)
-                    txt = num2str(val);
-                else
-                    txt = mat2str(val);
-                end
-            elseif iscell(val)
-                c = cell(size(val));
-                for i = 1:numel(val)
-                    c{i} = char(string(val{i}));
-                end
-                txt = ['{' strjoin(c, ', ') '}'];
-            else
-                txt = char(string(val));
-            end
+            txt = ui.AppUtils.formatSpecValue(val);
         end
 
         function valOut = toSI(app, valIn, quantity)
-            valOut = valIn;
-            if isempty(valIn) || ~isnumeric(valIn)
-                return;
-            end
-            switch quantity
-                case 'flow'
-                    if strcmp(app.unitPrefs.flow,'mol/s')
-                        valOut = valIn / 1000;
-                    end
-                case 'temperature'
-                    if strcmp(app.unitPrefs.temperature,'C')
-                        valOut = valIn + 273.15;
-                    end
-                case 'pressure'
-                    switch app.unitPrefs.pressure
-                        case 'kPa', valOut = valIn * 1e3;
-                        case 'bar', valOut = valIn * 1e5;
-                    end
-                case {'duty','power'}
-                    unitName = app.unitPrefs.(quantity);
-                    switch unitName
-                        case 'kW', valOut = valIn * 1e3;
-                        case 'MW', valOut = valIn * 1e6;
-                    end
-            end
+            valOut = ui.UnitConverter.toSI(valIn, quantity, app.unitPrefs);
         end
 
         function valOut = fromSI(app, valIn, quantity)
-            valOut = valIn;
-            if isempty(valIn) || ~isnumeric(valIn)
-                return;
-            end
-            switch quantity
-                case 'flow'
-                    if strcmp(app.unitPrefs.flow,'mol/s')
-                        valOut = valIn * 1000;
-                    end
-                case 'temperature'
-                    if strcmp(app.unitPrefs.temperature,'C')
-                        valOut = valIn - 273.15;
-                    end
-                case 'pressure'
-                    switch app.unitPrefs.pressure
-                        case 'kPa', valOut = valIn / 1e3;
-                        case 'bar', valOut = valIn / 1e5;
-                    end
-                case {'duty','power'}
-                    unitName = app.unitPrefs.(quantity);
-                    switch unitName
-                        case 'kW', valOut = valIn / 1e3;
-                        case 'MW', valOut = valIn / 1e6;
-                    end
-            end
+            valOut = ui.UnitConverter.fromSI(valIn, quantity, app.unitPrefs);
         end
 
         function txt = unitLabel(app, quantity, base)
-            switch quantity
-                case 'flow', u = app.unitPrefs.flow;
-                case 'temperature', u = app.unitPrefs.temperature;
-                case 'pressure', u = app.unitPrefs.pressure;
-                case 'duty', u = app.unitPrefs.duty;
-                case 'power', u = app.unitPrefs.power;
-                otherwise, u = '';
-            end
-            if isempty(u)
-                txt = base;
-            else
-                txt = sprintf('%s (%s)', base, u);
-            end
+            txt = ui.UnitConverter.unitLabel(quantity, base, app.unitPrefs);
         end
 
         function T = convertDisplayStreamTable(app, T)
-            if isempty(T)
-                return;
-            end
-            vars = T.Properties.VariableNames;
-            for i = 1:numel(vars)
-                v = vars{i};
-                if strcmp(v,'n_dot')
-                    T.(v) = app.fromSI(T.(v), 'flow');
-                elseif strcmp(v,'T')
-                    T.(v) = app.fromSI(T.(v), 'temperature');
-                elseif strcmp(v,'P')
-                    T.(v) = app.fromSI(T.(v), 'pressure');
-                end
-            end
+            T = ui.UnitConverter.convertDisplayStreamTable(T, app.unitPrefs);
         end
 
         function names = displayColumnNames(app, names)
-            for i = 1:numel(names)
-                if strcmp(names{i},'n_dot')
-                    names{i} = app.unitLabel('flow','n_dot');
-                elseif strcmp(names{i},'T')
-                    names{i} = app.unitLabel('temperature','T');
-                elseif strcmp(names{i},'P')
-                    names{i} = app.unitLabel('pressure','P');
-                end
-            end
+            names = ui.UnitConverter.displayColumnNames(names, app.unitPrefs);
         end
 
         function onUnitPrefsChanged(app, key, value)
@@ -3456,14 +2788,7 @@ classdef MathLabApp < handle
         end
 
         function prefs = mergeUnitPrefs(~, inPrefs)
-            prefs = struct('flow','kmol/s','temperature','K','pressure','Pa','duty','kW','power','kW');
-            fns = fieldnames(prefs);
-            for i = 1:numel(fns)
-                f = fns{i};
-                if isfield(inPrefs,f) && ~(isempty(inPrefs.(f)))
-                    prefs.(f) = char(string(inPrefs.(f)));
-                end
-            end
+            prefs = ui.UnitConverter.mergeUnitPrefs(inPrefs);
         end
 
         function applyUnitPrefsToControls(app)
@@ -3475,205 +2800,43 @@ classdef MathLabApp < handle
         end
 
         function openStreamTablePopup(app)
-            if ~isempty(app.StreamTableFig) && isvalid(app.StreamTableFig)
-                app.refreshStreamTablePopup();
-                app.StreamTableFig.Visible = 'on';
-                return;
+            if isempty(app.streamTablePopupCtrl)
+                deps = struct( ...
+                    'getLastFlowsheet', @() app.lastFlowsheet, ...
+                    'getStreams', @() app.streams, ...
+                    'getSpeciesNames', @() app.speciesNames, ...
+                    'getUnitPrefs', @() app.unitPrefs, ...
+                    'getProjectTitle', @() app.projectTitle, ...
+                    'setStatusFcn', @(msg) app.setStatus(msg), ...
+                    'lastExportPath', app.lastExportPath);
+                app.streamTablePopupCtrl = ui.StreamTablePopup(deps);
             end
-
-            app.StreamTableFig = uifigure('Name','MathLab — Solved Stream Table', ...
-                'Position',[140 90 1060 560], 'Color',[0.97 0.97 0.98]);
-            app.StreamTableFig.CloseRequestFcn = @(src,~) app.onStreamTablePopupClosed(src);
-
-            gl = uigridlayout(app.StreamTableFig, [3 1], ...
-                'RowHeight',{74,'1x',30}, 'Padding',[10 10 10 10], 'RowSpacing',6);
-
-            topG = uigridlayout(gl, [2 6], 'ColumnWidth',{'fit',90,220,'fit','1x',100}, ...
-                'Padding',[0 0 0 0], 'ColumnSpacing',6, 'RowSpacing',4);
-            topG.Layout.Row = 1;
-            uilabel(topG, 'Text','Solved Stream Table', 'FontWeight','bold', 'FontSize',13);
-            uilabel(topG, 'Text','Format');
-            app.StreamExportFormatDD = uidropdown(topG, 'Items', {'.mat','.csv'}, 'Value','.mat', ...
-                'ValueChangedFcn', @(~,~) app.onStreamExportFormatChanged());
-            uilabel(topG, 'Text','Filename');
-            app.StreamExportFileField = uieditfield(topG,'text','Value',app.defaultStreamExportFilename('mat'));
-            uibutton(topG, 'push', 'Text','Save', 'FontWeight','bold', ...
-                'ButtonPushedFcn',@(~,~) app.exportStreamTableFromPopup());
-
-            uilabel(topG, 'Text','Destination');
-            app.StreamExportPathField = uieditfield(topG,'text', ...
-                'Value', app.resolveInitialExportPath(), 'Editable','off');
-            uibutton(topG, 'push', 'Text','Choose...', ...
-                'ButtonPushedFcn',@(~,~) app.chooseStreamExportPath());
-            uilabel(topG, 'Text','');
-            uilabel(topG, 'Text','');
-            uibutton(topG, 'push', 'Text','Default Save Path', ...
-                'ButtonPushedFcn',@(~,~) app.saveStreamTableWithDefaults());
-
-            app.StreamTable = uitable(gl, 'ColumnEditable', false);
-            app.StreamTable.Layout.Row = 2;
-
-            app.StreamTableStatusLabel = uilabel(gl, 'Text','', 'FontColor',[0.3 0.3 0.3]);
-            app.StreamTableStatusLabel.Layout.Row = 3;
-
-            app.refreshStreamTablePopup();
-        end
-
-        function onStreamTablePopupClosed(app, src)
-            if ~isempty(src) && isvalid(src)
-                delete(src);
-            end
-            app.StreamTableFig = [];
-            app.StreamTable = [];
-            app.StreamTableStatusLabel = [];
-            app.StreamExportFormatDD = [];
-            app.StreamExportFileField = [];
-            app.StreamExportPathField = [];
+            app.streamTablePopupCtrl.open();
         end
 
         function refreshStreamTablePopup(app)
-            if isempty(app.StreamTable) || ~isvalid(app.StreamTable)
-                return;
-            end
-            T = app.buildDisplayStreamTable();
-            app.StreamTable.Data = T;
-            app.StreamTable.ColumnName = T.Properties.VariableNames;
-            if isempty(app.lastSolver) || isempty(app.lastFlowsheet)
-                msg = sprintf('Showing current stream state (%d row(s)). Run Solve for final solved table.', height(T));
-            else
-                msg = sprintf('Solved stream table (%d row(s)).', height(T));
-            end
-            if ~isempty(app.StreamTableStatusLabel) && isvalid(app.StreamTableStatusLabel)
-                app.StreamTableStatusLabel.Text = msg;
+            if ~isempty(app.streamTablePopupCtrl)
+                app.streamTablePopupCtrl.refresh();
             end
         end
 
         function T = buildDisplayStreamTable(app)
-            if ~isempty(app.lastFlowsheet)
-                T = app.lastFlowsheet.streamTable();
+            if ~isempty(app.streamTablePopupCtrl)
+                T = app.streamTablePopupCtrl.buildDisplayTable();
             else
-                fsTmp = proc.Flowsheet(app.speciesNames);
-                for i = 1:numel(app.streams)
-                    s = app.streams{i};
-                    fsTmp.addStream(s, char(string(s.name)));
+                if ~isempty(app.lastFlowsheet)
+                    T = app.lastFlowsheet.streamTable();
+                else
+                    fsTmp = proc.Flowsheet(app.speciesNames);
+                    for i = 1:numel(app.streams)
+                        s = app.streams{i};
+                        fsTmp.addStream(s, char(string(s.name)));
+                    end
+                    T = fsTmp.streamTable();
                 end
-                T = fsTmp.streamTable();
+                T = ui.UnitConverter.convertDisplayStreamTable(T, app.unitPrefs);
+                T.Properties.VariableNames = ui.UnitConverter.displayColumnNames(T.Properties.VariableNames, app.unitPrefs);
             end
-            T = app.convertDisplayStreamTable(T);
-            T.Properties.VariableNames = app.displayColumnNames(T.Properties.VariableNames);
-        end
-
-        function fmt = normalizeStreamTableExportFormat(~, fmt)
-            fmt = lower(strtrim(char(string(fmt))));
-            if startsWith(fmt,'.')
-                fmt = fmt(2:end);
-            end
-            if ~ismember(fmt, {'mat','csv'})
-                error('MathLab:StreamTable:UnsupportedFormat', ...
-                    'Unsupported stream table export format "%s". Use mat or csv.', fmt);
-            end
-        end
-
-        function fname = defaultStreamExportFilename(app, fmt)
-            fmt = app.normalizeStreamTableExportFormat(fmt);
-            fname = app.autoFileName('stream_table', fmt);
-        end
-
-        function onStreamExportFormatChanged(app)
-            if isempty(app.StreamExportFormatDD) || isempty(app.StreamExportFileField) ...
-                    || ~isvalid(app.StreamExportFormatDD) || ~isvalid(app.StreamExportFileField)
-                return;
-            end
-            fmt = app.normalizeStreamTableExportFormat(app.StreamExportFormatDD.Value);
-            curr = strtrim(app.StreamExportFileField.Value);
-            if isempty(curr)
-                app.StreamExportFileField.Value = app.defaultStreamExportFilename(fmt);
-                return;
-            end
-            [~, base, ext] = fileparts(curr);
-            if isempty(base)
-                base = 'stream_table';
-            end
-            if isempty(ext)
-                app.StreamExportFileField.Value = sprintf('%s.%s', base, fmt);
-            else
-                app.StreamExportFileField.Value = sprintf('%s.%s', base, fmt);
-            end
-        end
-
-        function chooseStreamExportPath(app)
-            startPath = app.resolveInitialExportPath();
-            sel = uigetdir(startPath, 'Choose Stream Table Export Folder');
-            if isequal(sel, 0)
-                return;
-            end
-            app.lastExportPath = char(string(sel));
-            if ~isempty(app.StreamExportPathField) && isvalid(app.StreamExportPathField)
-                app.StreamExportPathField.Value = app.lastExportPath;
-            end
-        end
-
-        function exportStreamTableFromPopup(app)
-            if isempty(app.StreamExportFormatDD) || ~isvalid(app.StreamExportFormatDD)
-                return;
-            end
-            fmt = app.normalizeStreamTableExportFormat(app.StreamExportFormatDD.Value);
-            folder = app.resolveInitialExportPath();
-            if ~isempty(app.StreamExportPathField) && isvalid(app.StreamExportPathField)
-                folder = strtrim(app.StreamExportPathField.Value);
-            end
-            if isempty(folder)
-                folder = app.ensureOutputDir('results');
-            end
-            app.ensureWritableDir(folder);
-            app.lastExportPath = char(string(folder));
-
-            fname = '';
-            if ~isempty(app.StreamExportFileField) && isvalid(app.StreamExportFileField)
-                fname = strtrim(app.StreamExportFileField.Value);
-            end
-            if isempty(fname)
-                fname = app.defaultStreamExportFilename(fmt);
-            end
-            [~, base, ext] = fileparts(fname);
-            if isempty(base)
-                base = 'stream_table';
-            end
-            if isempty(ext)
-                fname = sprintf('%s.%s', base, fmt);
-            else
-                fname = sprintf('%s.%s', base, fmt);
-            end
-
-            T = app.buildDisplayStreamTable();
-            filepath = fullfile(folder, fname);
-            if strcmp(fmt,'csv')
-                writetable(T, filepath);
-            else
-                streamTable = T; %#ok<NASGU>
-                save(filepath, 'streamTable');
-            end
-
-            msg = sprintf('Stream table exported to %s', filepath);
-            app.setStatus(msg);
-            if ~isempty(app.StreamTableStatusLabel) && isvalid(app.StreamTableStatusLabel)
-                app.StreamTableStatusLabel.Text = msg;
-            end
-        end
-
-        function saveStreamTableWithDefaults(app)
-            if isempty(app.StreamExportFormatDD) || ~isvalid(app.StreamExportFormatDD)
-                return;
-            end
-            fmt = app.normalizeStreamTableExportFormat(app.StreamExportFormatDD.Value);
-            app.lastExportPath = app.resolveInitialExportPath();
-            if ~isempty(app.StreamExportPathField) && isvalid(app.StreamExportPathField)
-                app.StreamExportPathField.Value = app.lastExportPath;
-            end
-            if ~isempty(app.StreamExportFileField) && isvalid(app.StreamExportFileField)
-                app.StreamExportFileField.Value = app.defaultStreamExportFilename(fmt);
-            end
-            app.exportStreamTableFromPopup();
         end
 
         function pathOut = resolveInitialExportPath(app)
@@ -3681,71 +2844,6 @@ classdef MathLabApp < handle
             if isempty(pathOut) || ~isfolder(pathOut)
                 pathOut = app.ensureOutputDir('results');
                 app.lastExportPath = pathOut;
-            end
-        end
-
-        function fmt = normalizeUnitTableExportFormat(~, fmt)
-            if ~(ischar(fmt) || (isstring(fmt) && isscalar(fmt)))
-                error('MathLab:UnitTable:InvalidFormat', ...
-                    'Unit table export format must be a non-empty text scalar (''csv'' or ''mat'').');
-            end
-            fmt = lower(strtrim(char(string(fmt))));
-            if isempty(fmt)
-                error('MathLab:UnitTable:InvalidFormat', ...
-                    'Unit table export format must be a non-empty text scalar (''csv'' or ''mat'').');
-            end
-            if ~ismember(fmt, {'csv','mat'})
-                error('MathLab:UnitTable:UnsupportedFormat', ...
-                    'Unsupported unit table export format "%s". Supported formats: csv, mat.', fmt);
-            end
-        end
-
-        % Single export entry point for unit table exports (avoid duplicate methods during refactors).
-        function exportUnitTableToOutput(app, fmt)
-            fmt = app.normalizeUnitTableExportFormat(fmt);
-
-            outDir = app.ensureOutputDir('results');
-            outDirMsg = char(string(outDir));
-            if isempty(strtrim(outDirMsg)) || ~isfolder(outDirMsg)
-                reason = sprintf('Output directory is not valid: %s', outDirMsg);
-                app.setStatus(sprintf('Unit table export failed: %s', reason));
-                if ~isempty(app.UnitTableStatusLabel) && isvalid(app.UnitTableStatusLabel)
-                    app.UnitTableStatusLabel.Text = sprintf('Unit table export failed: %s', reason);
-                end
-                uialert(app.Fig, sprintf(['Failed to export unit table.\nResolved output directory: %s\nReason: %s'], outDirMsg, reason), ...
-                    'Unit Table Export Failed', 'Icon', 'error');
-                return;
-            end
-
-            try
-                T = app.buildUnitResultsTable();
-                switch fmt
-                    case 'csv'
-                        filepath = fullfile(outDirMsg, app.autoFileName('unit_table', 'csv'));
-                        writetable(T, filepath);
-                    case 'mat'
-                        filepath = fullfile(outDirMsg, app.autoFileName('unit_table', 'mat'));
-                        unitTable = T; %#ok<NASGU>
-                        save(filepath, 'unitTable');
-                    otherwise
-                        error('MathLab:UnitTable:UnsupportedFormat', ...
-                            'Unsupported unit table export format "%s". Supported formats: csv, mat.', fmt);
-                end
-            catch ME
-                reason = strtrim(ME.message);
-                failMsg = sprintf('Unit table export failed: %s (output dir: %s)', reason, outDirMsg);
-                app.setStatus(failMsg);
-                if ~isempty(app.UnitTableStatusLabel) && isvalid(app.UnitTableStatusLabel)
-                    app.UnitTableStatusLabel.Text = failMsg;
-                end
-                uialert(app.Fig, sprintf(['Failed to export unit table as %s.\nResolved output directory: %s\nReason: %s'], ...
-                    upper(fmt), outDirMsg, reason), 'Unit Table Export Failed', 'Icon', 'error');
-                return;
-            end
-
-            app.setStatus(sprintf('Unit table exported to %s (output dir: %s)', filepath, outDirMsg));
-            if ~isempty(app.UnitTableStatusLabel) && isvalid(app.UnitTableStatusLabel)
-                app.UnitTableStatusLabel.Text = sprintf('Exported %s (%d rows): %s [dir: %s]', upper(fmt), height(T), filepath, outDirMsg);
             end
         end
 
@@ -3904,23 +3002,8 @@ classdef MathLabApp < handle
         end
 
         function saveConfig(app, filepath)
-            % Serialize entire flowsheet state to a .mat file
-            if ~(ischar(filepath) || isstring(filepath)) || strlength(string(filepath)) == 0
-                error('MathLab:SaveConfig:InvalidPath', 'Config path must be a non-empty string.');
-            end
-            filepath = char(string(filepath));
-            saveDir = fileparts(filepath);
-            if isempty(saveDir)
-                saveDir = pwd;
-            end
-            app.ensureWritableDir(saveDir);
-
             cfg = app.buildValidatedConfigPayload();
-            save(filepath, '-struct', 'cfg');
-
-            % Also generate a companion .m script
-            mFile = strrep(filepath, '.mat', '_script.m');
-            app.generateScript(mFile, cfg);
+            ui.ConfigManager.saveConfig(filepath, cfg);
         end
 
         function loadConfig(app, filepath)
@@ -4020,396 +3103,13 @@ classdef MathLabApp < handle
         end
 
         function u = buildUnitFromDef(app, def, varargin)
-            u = [];
-            p = inputParser;
-            p.addParameter('includeIdentityLink', true, @(x)islogical(x)&&isscalar(x));
-            p.parse(varargin{:});
-            includeIdentityLink = p.Results.includeIdentityLink;
-            switch def.type
-                case 'Link'
-                    if app.isIdentityLinkDef(def) && ~includeIdentityLink
-                        return;
-                    end
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.Link(sIn, sOut);
-                    end
-                case 'Mixer'
-                    inS = {};
-                    for k = 1:numel(def.inlets)
-                        s = app.findStream(def.inlets{k});
-                        if isempty(s), return; end
-                        inS{end+1} = s; %#ok
-                    end
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sOut)
-                        u = proc.units.Mixer(inS, sOut);
-                    end
-                case 'Reactor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.Reactor(sIn, sOut, def.reactions, def.conversion);
-                    end
-                case 'StoichiometricReactor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.StoichiometricReactor(sIn, sOut, def.nu, ...
-                            'extent', def.extent, 'extentMode', def.extentMode, ...
-                            'referenceSpecies', def.referenceSpecies);
-                    end
-                case 'ConversionReactor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.ConversionReactor(sIn, sOut, def.nu, def.keySpecies, ...
-                            def.conversion, 'conversionMode', def.conversionMode);
-                    end
-                case 'YieldReactor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.YieldReactor(sIn, sOut, def.basisSpecies, def.conversion, ...
-                            def.productSpecies, def.productYields, 'conversionMode', def.conversionMode);
-                    end
-                case 'EquilibriumReactor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        u = proc.units.EquilibriumReactor(sIn, sOut, def.nu, def.Keq, ...
-                            'referenceSpecies', def.referenceSpecies);
-                    end
-                case 'Separator'
-                    sIn = app.findStream(def.inlet);
-                    sA  = app.findStream(def.outletA);
-                    sB  = app.findStream(def.outletB);
-                    if ~isempty(sIn) && ~isempty(sA) && ~isempty(sB)
-                        u = proc.units.Separator(sIn, sA, sB, def.phi);
-                    end
-                case 'Purge'
-                    sIn  = app.findStream(def.inlet);
-                    sRec = app.findStream(def.recycle);
-                    sPur = app.findStream(def.purge);
-                    if ~isempty(sIn) && ~isempty(sRec) && ~isempty(sPur)
-                        u = proc.units.Purge(sIn, sRec, sPur, def.beta);
-                    end
-                case 'Splitter'
-                    sIn = app.findStream(def.inlet);
-                    outS = {};
-                    for k = 1:numel(def.outlets)
-                        s = app.findStream(def.outlets{k});
-                        if isempty(s), return; end
-                        outS{end+1} = s; %#ok
-                    end
-                    if ~isempty(sIn)
-                        if isfield(def, 'splitFractions')
-                            u = proc.units.Splitter(sIn, outS, 'fractions', def.splitFractions);
-                        else
-                            u = proc.units.Splitter(sIn, outS, 'flows', def.specifiedOutletFlows);
-                        end
-                    end
-                case 'Recycle'
-                    sSrc = app.findStream(def.source);
-                    sTear = app.findStream(def.tear);
-                    if ~isempty(sSrc) && ~isempty(sTear)
-                        u = proc.units.Recycle(sSrc, sTear);
-                    end
-                case 'Bypass'
-                    sIn = app.findStream(def.inlet);
-                    sProcIn = app.findStream(def.processInlet);
-                    sByp = app.findStream(def.bypassStream);
-                    sRet = app.findStream(def.processReturn);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sProcIn) && ~isempty(sByp) && ~isempty(sRet) && ~isempty(sOut)
-                        u = proc.units.Bypass(sIn, sProcIn, sByp, sRet, sOut, def.bypassFraction);
-                    end
-                case 'Manifold'
-                    inS = {};
-                    for k = 1:numel(def.inlets)
-                        s = app.findStream(def.inlets{k});
-                        if isempty(s), return; end
-                        inS{end+1} = s; %#ok
-                    end
-                    outS = {};
-                    for k = 1:numel(def.outlets)
-                        s = app.findStream(def.outlets{k});
-                        if isempty(s), return; end
-                        outS{end+1} = s; %#ok
-                    end
-                    u = proc.units.Manifold(inS, outS, def.route);
-                case 'Source'
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sOut)
-                        opts = struct();
-                        if isfield(def,'totalFlow'), opts.totalFlow = def.totalFlow; end
-                        if isfield(def,'composition'), opts.composition = def.composition; end
-                        if isfield(def,'componentFlows'), opts.componentFlows = def.componentFlows; end
-                        u = proc.units.Source(sOut, opts);
-                    end
-                case 'Sink'
-                    sIn = app.findStream(def.inlet);
-                    if ~isempty(sIn), u = proc.units.Sink(sIn); end
-                case 'DesignSpec'
-                    s = app.findStream(def.stream);
-                    if ~isempty(s)
-                        u = proc.units.DesignSpec(s, def.metric, def.target, def.componentIndex);
-                    end
-                case 'Adjust'
-                    if isfield(def,'designSpecIndex') && isfield(def,'ownerIndex') && ...
-                            def.designSpecIndex <= numel(app.units) && def.ownerIndex <= numel(app.units)
-                        ds = app.units{def.designSpecIndex};
-                        owner = app.units{def.ownerIndex};
-                        u = proc.units.Adjust(ds, owner, def.field, def.index, def.minValue, def.maxValue);
-                    end
-                case 'Calculator'
-                    lhs = app.findStream(def.lhsStream);
-                    a = app.findStream(def.aStream);
-                    b = app.findStream(def.bStream);
-                    if ~isempty(lhs) && ~isempty(a) && ~isempty(b)
-                        u = proc.units.Calculator(lhs, def.lhsField, a, def.aField, def.operator, b, def.bField);
-                    end
-                case 'Constraint'
-                    s = app.findStream(def.stream);
-                    if ~isempty(s)
-                        u = proc.units.Constraint(s, def.field, def.value, def.index);
-                    end
-                case 'Heater'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        mix = app.buildThermoMixForGUI();
-                        args = {};
-                        if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
-                        if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                        if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
-                        if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                        if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                        u = proc.units.Heater(sIn, sOut, mix, args{:});
-                    end
-                case 'Cooler'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        mix = app.buildThermoMixForGUI();
-                        args = {};
-                        if isfield(def,'Tout'), args=[args,{'Tout',def.Tout}]; end
-                        if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                        if isfield(def,'dP'), args=[args,{'dP',def.dP}]; end
-                        if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                        if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                        u = proc.units.Cooler(sIn, sOut, mix, args{:});
-                    end
-                case 'HeatExchanger'
-                    hIn = app.findStream(def.hotInlet);
-                    hOut = app.findStream(def.hotOutlet);
-                    cIn = app.findStream(def.coldInlet);
-                    cOut = app.findStream(def.coldOutlet);
-                    if ~isempty(hIn) && ~isempty(hOut) && ~isempty(cIn) && ~isempty(cOut)
-                        mix = app.buildThermoMixForGUI();
-                        args = {};
-                        if isfield(def,'Th_out'), args=[args,{'Th_out',def.Th_out}]; end
-                        if isfield(def,'Tc_out'), args=[args,{'Tc_out',def.Tc_out}]; end
-                        if isfield(def,'duty'), args=[args,{'duty',def.duty}]; end
-                        u = proc.units.HeatExchanger(hIn, hOut, cIn, cOut, mix, args{:});
-                    end
-                case 'Compressor'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        mix = app.buildThermoMixForGUI();
-                        args = {};
-                        if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                        if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                        if isfield(def,'eta'), args=[args,{'eta',def.eta}]; end
-                        u = proc.units.Compressor(sIn, sOut, mix, args{:});
-                    end
-                case 'Turbine'
-                    sIn = app.findStream(def.inlet);
-                    sOut = app.findStream(def.outlet);
-                    if ~isempty(sIn) && ~isempty(sOut)
-                        mix = app.buildThermoMixForGUI();
-                        args = {};
-                        if isfield(def,'Pout'), args=[args,{'Pout',def.Pout}]; end
-                        if isfield(def,'PR'), args=[args,{'PR',def.PR}]; end
-                        if isfield(def,'eta'), args=[args,{'eta',def.eta}]; end
-                        u = proc.units.Turbine(sIn, sOut, mix, args{:});
-                    end
-            end
+            u = proc.UnitFactory.buildUnitFromDef(def, app.streams, app.units, app.speciesNames, varargin{:});
         end
 
         function generateScript(~, filepath, cfg)
-            % Write a human-readable .m script that recreates the flowsheet
-            fid = fopen(filepath, 'w');
-            if fid < 0, return; end
-
-            fprintf(fid, '%%%% MathLab Config Script (auto-generated)\n');
-            fprintf(fid, '%% Run this to recreate the flowsheet and solve.\n');
-            fprintf(fid, '%% You can also use: [T, solver] = runFromConfig(''%s'');\n\n', ...
-                strrep(filepath,'_script.m','.mat'));
-            fprintf(fid, 'clear; clc;\n\n');
-
-            % Species
-            fprintf(fid, 'species = {');
-            for i = 1:numel(cfg.speciesNames)
-                if i>1, fprintf(fid, ', '); end
-                fprintf(fid, '''%s''', cfg.speciesNames{i});
-            end
-            fprintf(fid, '};\n');
-            fprintf(fid, 'fs = proc.Flowsheet(species);\n\n');
-
-            % Streams
-            fprintf(fid, '%% --- Streams ---\n');
-            for i = 1:numel(cfg.streams)
-                sd = cfg.streams(i);
-                fprintf(fid, '%s = proc.Stream("%s", species);\n', sd.name, sd.name);
-                fprintf(fid, '%s.n_dot = %.6g; %s.T = %.6g; %s.P = %.6g;\n', ...
-                    sd.name, sd.n_dot, sd.name, sd.T, sd.name, sd.P);
-                fprintf(fid, '%s.y = %s;\n', sd.name, mat2str(sd.y, 8));
-                if sd.known_n_dot, fprintf(fid, '%s.known.n_dot = true;\n', sd.name); end
-                if sd.known_T,     fprintf(fid, '%s.known.T = true;\n', sd.name); end
-                if sd.known_P,     fprintf(fid, '%s.known.P = true;\n', sd.name); end
-                if all(sd.known_y), fprintf(fid, '%s.known.y(:) = true;\n', sd.name); end
-                fprintf(fid, 'fs.addStream(%s);\n\n', sd.name);
-            end
-
-            % Units
-            if isfield(cfg,'unitDefs') && ~isempty(cfg.unitDefs)
-                fprintf(fid, '%% --- Units ---\n');
-                for i = 1:numel(cfg.unitDefs)
-                    def = cfg.unitDefs{i};
-                    switch def.type
-                        case 'Link'
-                            isIdentityLink = false;
-                            if isfield(def, 'mode')
-                                isIdentityLink = strcmp(def.mode, 'identity');
-                            end
-                            if isfield(def, 'isIdentity')
-                                isIdentityLink = logical(def.isIdentity);
-                            end
-                            if ~isIdentityLink
-                                fprintf(fid, 'fs.addUnit(proc.units.Link(%s, %s));\n', def.inlet, def.outlet);
-                            end
-                        case 'Mixer'
-                            inStr = strjoin(cellfun(@(n) n, def.inlets, 'Uni',false), ', ');
-                            fprintf(fid, 'fs.addUnit(proc.units.Mixer({%s}, %s));\n', inStr, def.outlet);
-                        case 'Reactor'
-                            fprintf(fid, 'rxn.reactants = %s;\n', mat2str(def.reactions.reactants));
-                            fprintf(fid, 'rxn.products = %s;\n', mat2str(def.reactions.products));
-                            fprintf(fid, 'rxn.stoich = %s;\n', mat2str(def.reactions.stoich));
-                            fprintf(fid, 'rxn.name = "%s";\n', def.reactions.name);
-                            fprintf(fid, 'fs.addUnit(proc.units.Reactor(%s, %s, rxn, %.4g));\n', ...
-                                def.inlet, def.outlet, def.conversion);
-                        case 'StoichiometricReactor'
-                            fprintf(fid, 'fs.addUnit(proc.units.StoichiometricReactor(%s, %s, %s, ''extent'', %.6g, ''extentMode'', ''%s'', ''referenceSpecies'', %d));\n', ...
-                                def.inlet, def.outlet, mat2str(def.nu), def.extent, def.extentMode, def.referenceSpecies);
-                        case 'ConversionReactor'
-                            fprintf(fid, 'fs.addUnit(proc.units.ConversionReactor(%s, %s, %s, %d, %.6g, ''conversionMode'', ''%s''));\n', ...
-                                def.inlet, def.outlet, mat2str(def.nu), def.keySpecies, def.conversion, def.conversionMode);
-                        case 'YieldReactor'
-                            fprintf(fid, 'fs.addUnit(proc.units.YieldReactor(%s, %s, %d, %.6g, %s, %s, ''conversionMode'', ''%s''));\n', ...
-                                def.inlet, def.outlet, def.basisSpecies, def.conversion, mat2str(def.productSpecies), mat2str(def.productYields), def.conversionMode);
-                        case 'EquilibriumReactor'
-                            fprintf(fid, 'fs.addUnit(proc.units.EquilibriumReactor(%s, %s, %s, %.6g, ''referenceSpecies'', %d));\n', ...
-                                def.inlet, def.outlet, mat2str(def.nu), def.Keq, def.referenceSpecies);
-                        case 'Separator'
-                            fprintf(fid, 'fs.addUnit(proc.units.Separator(%s, %s, %s, %s));\n', ...
-                                def.inlet, def.outletA, def.outletB, mat2str(def.phi,6));
-                        case 'Purge'
-                            fprintf(fid, 'fs.addUnit(proc.units.Purge(%s, %s, %s, %.4g));\n', ...
-                                def.inlet, def.recycle, def.purge, def.beta);
-                        case 'Splitter'
-                            outStr = strjoin(cellfun(@(n) n, def.outlets, 'Uni',false), ', ');
-                            if isfield(def, 'splitFractions')
-                                fprintf(fid, 'fs.addUnit(proc.units.Splitter(%s, {%s}, ''fractions'', %s));\n', ...
-                                    def.inlet, outStr, mat2str(def.splitFractions,6));
-                            else
-                                fprintf(fid, 'fs.addUnit(proc.units.Splitter(%s, {%s}, ''flows'', %s));\n', ...
-                                    def.inlet, outStr, mat2str(def.specifiedOutletFlows,6));
-                            end
-                        case 'Recycle'
-                            fprintf(fid, 'fs.addUnit(proc.units.Recycle(%s, %s));\n', def.source, def.tear);
-                        case 'Bypass'
-                            fprintf(fid, 'fs.addUnit(proc.units.Bypass(%s, %s, %s, %s, %s, %.4g));\n', ...
-                                def.inlet, def.processInlet, def.bypassStream, def.processReturn, def.outlet, def.bypassFraction);
-                        case 'Manifold'
-                            inStr = strjoin(cellfun(@(n) n, def.inlets, 'Uni',false), ', ');
-                            outStr = strjoin(cellfun(@(n) n, def.outlets, 'Uni',false), ', ');
-                            fprintf(fid, 'fs.addUnit(proc.units.Manifold({%s}, {%s}, %s));\n', ...
-                                inStr, outStr, mat2str(def.route));
-                        case 'Source'
-                            fprintf(fid, 'srcOpts = struct(''totalFlow'', %.6g, ''composition'', %s, ''componentFlows'', %s);\n', ...
-                                def.totalFlow, mat2str(def.composition,6), mat2str(def.componentFlows,6));
-                            fprintf(fid, 'fs.addUnit(proc.units.Source(%s, srcOpts));\n', def.outlet);
-                        case 'Sink'
-                            fprintf(fid, 'fs.addUnit(proc.units.Sink(%s));\n', def.inlet);
-                        case 'DesignSpec'
-                            fprintf(fid, 'fs.addUnit(proc.units.DesignSpec(%s, ''%s'', %.6g, %d));\n', ...
-                                def.stream, def.metric, def.target, def.componentIndex);
-                        case 'Calculator'
-                            fprintf(fid, 'fs.addUnit(proc.units.Calculator(%s, ''%s'', %s, ''%s'', ''%s'', %s, ''%s''));\n', ...
-                                def.lhsStream, def.lhsField, def.aStream, def.aField, def.operator, def.bStream, def.bField);
-                        case 'Constraint'
-                            fprintf(fid, 'fs.addUnit(proc.units.Constraint(%s, ''%s'', %.6g, %.6g));\n', ...
-                                def.stream, def.field, def.value, def.index);
-                        case 'Heater'
-                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
-                            args = '';
-                            if isfield(def,'Tout'), args = [args, sprintf(', ''Tout'', %.6g', def.Tout)]; end
-                            if isfield(def,'duty'), args = [args, sprintf(', ''duty'', %.6g', def.duty)]; end
-                            if isfield(def,'dP'), args = [args, sprintf(', ''dP'', %.6g', def.dP)]; end
-                            if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
-                            if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
-                            fprintf(fid, 'fs.addUnit(proc.units.Heater(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
-                        case 'Cooler'
-                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
-                            args = '';
-                            if isfield(def,'Tout'), args = [args, sprintf(', ''Tout'', %.6g', def.Tout)]; end
-                            if isfield(def,'duty'), args = [args, sprintf(', ''duty'', %.6g', def.duty)]; end
-                            if isfield(def,'dP'), args = [args, sprintf(', ''dP'', %.6g', def.dP)]; end
-                            if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
-                            if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
-                            fprintf(fid, 'fs.addUnit(proc.units.Cooler(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
-                        case 'HeatExchanger'
-                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
-                            args = '';
-                            if isfield(def,'Th_out'), args = sprintf(', ''Th_out'', %.6g', def.Th_out); end
-                            if isfield(def,'Tc_out'), args = sprintf(', ''Tc_out'', %.6g', def.Tc_out); end
-                            if isfield(def,'duty'), args = sprintf(', ''duty'', %.6g', def.duty); end
-                            fprintf(fid, 'fs.addUnit(proc.units.HeatExchanger(%s, %s, %s, %s, mix%s));\n', ...
-                                def.hotInlet, def.hotOutlet, def.coldInlet, def.coldOutlet, args);
-                        case 'Compressor'
-                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
-                            args = '';
-                            if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
-                            if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
-                            if isfield(def,'eta'), args = [args, sprintf(', ''eta'', %.6g', def.eta)]; end
-                            fprintf(fid, 'fs.addUnit(proc.units.Compressor(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
-                        case 'Turbine'
-                            fprintf(fid, 'thermoLib = proc.thermo.ThermoLibrary();\n');
-                            fprintf(fid, 'mix = proc.thermo.IdealGasMixture(species, thermoLib);\n');
-                            args = '';
-                            if isfield(def,'Pout'), args = [args, sprintf(', ''Pout'', %.6g', def.Pout)]; end
-                            if isfield(def,'PR'), args = [args, sprintf(', ''PR'', %.6g', def.PR)]; end
-                            if isfield(def,'eta'), args = [args, sprintf(', ''eta'', %.6g', def.eta)]; end
-                            fprintf(fid, 'fs.addUnit(proc.units.Turbine(%s, %s, mix%s));\n', def.inlet, def.outlet, args);
-                    end
-                end
-            end
-
-            fprintf(fid, '\n%% --- Solve ---\n');
-            fprintf(fid, 'solver = fs.solve(''maxIter'', %d, ''tolAbs'', %.2e, ''verbose'', true);\n', ...
-                cfg.maxIter, cfg.tolAbs);
-            fprintf(fid, 'T = fs.streamTable();\n');
-            fprintf(fid, 'disp(T);\n');
-
-            fclose(fid);
+            ui.ConfigManager.generateScript(filepath, cfg);
         end
+
     end
 
     % =====================================================================
@@ -4605,283 +3305,55 @@ classdef MathLabApp < handle
     %  HELPERS
     % =====================================================================
     methods (Access = private)
-        function [resolvedDefs, aliasByOutlet] = resolveIdentityLinks(app, unitDefs)
-            aliasByOutlet = containers.Map('KeyType','char','ValueType','char');
-            resolvedDefs = cell(size(unitDefs));
-            for i = 1:numel(unitDefs)
-                def = unitDefs{i};
-                if ~isstruct(def)
-                    resolvedDefs{i} = def;
-                    continue;
-                end
-                def = app.rewriteDefStreams(def, aliasByOutlet);
-                if strcmp(def.type, 'Link') && app.isIdentityLinkDef(def)
-                    inletRoot = app.resolveAliasName(def.inlet, aliasByOutlet);
-                    aliasByOutlet(char(def.outlet)) = inletRoot;
-                    continue;
-                end
-                resolvedDefs{i} = def;
-            end
-            resolvedDefs = resolvedDefs(~cellfun(@isempty, resolvedDefs));
-        end
-
-        function def = rewriteDefStreams(app, def, aliasByOutlet)
-            fnSingles = {'inlet','source','stream','tear','processInlet','bypassStream','processReturn', ...
-                'lhsStream','aStream','bStream','recycle','purge','outlet','outletA','outletB', ...
-                'hotInlet','hotOutlet','coldInlet','coldOutlet'};
-            for i = 1:numel(fnSingles)
-                f = fnSingles{i};
-                if ~isfield(def, f)
-                    continue;
-                end
-                if strcmp(f, 'outlet') && strcmp(def.type, 'Link') && app.isIdentityLinkDef(def)
-                    continue;
-                end
-                def.(f) = app.resolveAliasName(def.(f), aliasByOutlet);
-            end
-            if isfield(def, 'inlets')
-                for k = 1:numel(def.inlets)
-                    def.inlets{k} = app.resolveAliasName(def.inlets{k}, aliasByOutlet);
-                end
-            end
-            if isfield(def, 'outlets')
-                for k = 1:numel(def.outlets)
-                    def.outlets{k} = app.resolveAliasName(def.outlets{k}, aliasByOutlet);
-                end
-            end
+        function [resolvedDefs, aliasByOutlet] = resolveIdentityLinks(~, unitDefs)
+            [resolvedDefs, aliasByOutlet] = proc.UnitFactory.resolveIdentityLinks(unitDefs);
         end
 
         function addStreamAliasesToFlowsheet(app, fs, aliasByOutlet)
-            if isempty(aliasByOutlet)
-                return;
-            end
-            keys = aliasByOutlet.keys;
-            for i = 1:numel(keys)
-                aliasName = keys{i};
-                targetName = aliasByOutlet(aliasName);
-                s = app.findStream(targetName);
-                if ~isempty(s)
-                    fs.addAlias(aliasName, s);
-                end
-            end
+            proc.UnitFactory.addStreamAliasesToFlowsheet(fs, app.streams, aliasByOutlet);
         end
 
         function tf = isIdentityLinkDef(~, def)
-            tf = strcmp(def.type, 'Link') && isfield(def, 'mode') && strcmp(def.mode, 'identity');
-            if isfield(def, 'isIdentity')
-                tf = logical(def.isIdentity);
-            end
-        end
-
-        function outName = resolveAliasName(~, name, aliasByOutlet)
-            outName = char(string(name));
-            visited = containers.Map('KeyType','char','ValueType','logical');
-            while isKey(aliasByOutlet, outName)
-                if isKey(visited, outName)
-                    break;
-                end
-                visited(outName) = true;
-                outName = aliasByOutlet(outName);
-            end
+            tf = proc.UnitFactory.isIdentityLinkDef(def);
         end
 
         function mix = buildThermoMixForGUI(app)
-            % Build an IdealGasMixture from the current species list.
-            % Returns [] if any species is missing from the thermo library.
-            try
-                lib = proc.thermo.ThermoLibrary();
-                mix = proc.thermo.IdealGasMixture(app.speciesNames, lib);
-            catch
-                mix = [];
-            end
+            mix = ui.AppUtils.buildThermoMix(app.speciesNames);
         end
 
         function names = getStreamNames(app)
-            names = cellfun(@(s) char(string(s.name)), app.streams, 'Uni', false);
+            names = ui.AppUtils.getStreamNames(app.streams);
         end
 
         function s = findStream(app, name)
-            s = [];
-            for i = 1:numel(app.streams)
-                if strcmp(char(string(app.streams{i}.name)), char(name))
-                    s = app.streams{i}; return;
-                end
-            end
+            s = ui.AppUtils.findStream(app.streams, name);
         end
 
-        function nm = shortTypeName(app, u)
-            cn = class(u);
-            parts = strsplit(cn,'.');
-            nm = app.prettyUnitTypeName(parts{end});
+        function nm = shortTypeName(~, u)
+            nm = ui.AppUtils.shortTypeName(u);
         end
 
-        function label = prettyUnitTypeName(app, type)
-            catalog = app.unitTypeCatalog();
-            idx = find(strcmp({catalog.type}, char(string(type))), 1);
-            if isempty(idx)
-                label = char(string(type));
-            else
-                label = catalog(idx).label;
-            end
+        function label = prettyUnitTypeName(~, type)
+            label = ui.AppUtils.prettyUnitTypeName(type);
         end
 
         function catalog = unitTypeCatalog(~)
-            catalog = struct( ...
-                'type', {'Mixer','Link','Reactor','StoichiometricReactor','ConversionReactor','YieldReactor','EquilibriumReactor', ...
-                         'Heater','Cooler','HeatExchanger','Compressor','Turbine','Separator','Purge','Splitter','Recycle', ...
-                         'Bypass','Manifold','Source','Sink','DesignSpec','Adjust','Calculator','Constraint'}, ...
-                'label', {'Mixer','Stream Link','Generic Reactor','Stoichiometric Reactor','Conversion Reactor','Yield Reactor','Equilibrium Reactor', ...
-                          'Heater','Cooler','Heat Exchanger','Compressor','Turbine','Separator','Purge Split','Flow Splitter','Recycle Connection', ...
-                          'Bypass Network','Routing Manifold','Feed Source','Product Sink','Design Specification','Adjust Controller','Stream Calculator','Fixed Constraint'}, ...
-                'description', {'Combines multiple inlet streams into one outlet stream.', ...
-                                'Copies one stream state directly to another stream.', ...
-                                'Single-reaction conversion reactor using reactant/product index lists.', ...
-                                'Applies a stoichiometric reaction with fixed or solved extent.', ...
-                                'Applies stoichiometric conversion based on a key species.', ...
-                                'Converts a basis species and distributes products using yield factors.', ...
-                                'Solves a stoichiometric reaction at specified equilibrium constant K.', ...
-                                'Adds heat to a process stream with optional pressure specification.', ...
-                                'Removes heat from a process stream with optional pressure specification.', ...
-                                'Transfers heat between hot and cold streams using one thermal spec.', ...
-                                'Raises pressure and estimates shaft power from efficiency.', ...
-                                'Drops pressure and estimates shaft power recovery from efficiency.', ...
-                                'Splits species between two outlets using per-species split fractions.', ...
-                                'Splits one stream into recycle and purge branches by recycle fraction.', ...
-                                'Splits one stream into multiple outlets by fractions or outlet flows.', ...
-                                'Defines recycle source and tear streams for convergence handling.', ...
-                                'Routes a feed around a process path and recombines both paths.', ...
-                                'Routes selected inlet streams to specified outlet streams.', ...
-                                'Applies fixed feed conditions to an outlet stream.', ...
-                                'Terminal unit that consumes an inlet stream.', ...
-                                'Defines a measurable target used by controller-style units.', ...
-                                'Adjusts a unit parameter so a linked design specification is met.', ...
-                                'Sets one stream field from arithmetic on two other stream fields.', ...
-                                'Fixes a stream field value directly (optionally at one index).'});
+            catalog = ui.AppUtils.unitTypeCatalog();
         end
 
         function cfg = buildValidatedConfigPayload(app)
-            cfg = struct();
-            cfg.speciesNames = app.speciesNames;
-            cfg.speciesMW    = app.speciesMW;
-
-            % Serialize streams
-            N = numel(app.streams);
-            if N == 0
-                streamData = struct('name', {}, 'n_dot', {}, 'T', {}, 'P', {}, 'y', {}, ...
-                    'known_n_dot', {}, 'known_T', {}, 'known_P', {}, 'known_y', {});
-            else
-                streamData = repmat(struct('name', '', 'n_dot', NaN, 'T', NaN, 'P', NaN, 'y', [], ...
-                    'known_n_dot', false, 'known_T', false, 'known_P', false, 'known_y', false), 1, N);
-            end
-            for i = 1:N
-                s = app.streams{i};
-                sd = struct();
-                sd.name  = char(string(s.name));
-                sd.n_dot = s.n_dot;
-                sd.T     = s.T;
-                sd.P     = s.P;
-                sd.y     = s.y;
-                sd.known_n_dot = s.known.n_dot;
-                sd.known_T     = s.known.T;
-                sd.known_P     = s.known.P;
-                sd.known_y     = s.known.y;
-                streamData(i) = sd;
-            end
-            cfg.streams = streamData;
-
-            % Serialize unit definitions (not the objects themselves)
-            cfg.unitDefs = app.unitDefs;
-
-            % Solver settings
-            cfg.maxIter = app.MaxIterField.Value;
-            cfg.tolAbs  = app.TolField.Value;
-
-            % Project title
-            cfg.projectTitle = app.projectTitle;
-            cfg.unitPrefs = app.unitPrefs;
-            cfg.lastExportPath = app.lastExportPath;
-            cfg.logEveryN = app.logEveryN;
-
-            app.validateConfigPayload(cfg);
+            cfg = ui.ConfigManager.buildConfigPayload( ...
+                app.speciesNames, app.speciesMW, app.streams, app.unitDefs, ...
+                app.MaxIterField.Value, app.TolField.Value, ...
+                app.projectTitle, app.unitPrefs, app.lastExportPath, app.logEveryN);
         end
 
         function validateConfigPayload(~, cfg)
-            requiredTop = {'speciesNames','speciesMW','streams','unitDefs','maxIter','tolAbs','projectTitle','unitPrefs','lastExportPath','logEveryN'};
-            for i = 1:numel(requiredTop)
-                key = requiredTop{i};
-                if ~isfield(cfg, key)
-                    error('MathLab:SaveConfig:MissingField', 'Config payload missing required field "%s".', key);
-                end
-            end
-
-            if ~iscell(cfg.speciesNames) || isempty(cfg.speciesNames)
-                error('MathLab:SaveConfig:InvalidSpecies', 'speciesNames must be a non-empty cell array.');
-            end
-            if ~isnumeric(cfg.speciesMW) || numel(cfg.speciesMW) ~= numel(cfg.speciesNames)
-                error('MathLab:SaveConfig:InvalidSpecies', 'speciesMW must be numeric and match speciesNames length.');
-            end
-
-            if ~isstruct(cfg.streams)
-                error('MathLab:SaveConfig:InvalidStreams', 'streams must be a struct array.');
-            end
-            streamRequired = {'name','n_dot','T','P','y','known_n_dot','known_T','known_P','known_y'};
-            for i = 1:numel(cfg.streams)
-                for k = 1:numel(streamRequired)
-                    f = streamRequired{k};
-                    if ~isfield(cfg.streams(i), f)
-                        error('MathLab:SaveConfig:InvalidStreams', ...
-                            'Stream %d missing required field "%s".', i, f);
-                    end
-                end
-            end
-
-            if ~iscell(cfg.unitDefs)
-                error('MathLab:SaveConfig:InvalidUnits', 'unitDefs must be a cell array.');
-            end
-            if any(~cellfun(@isstruct, cfg.unitDefs))
-                error('MathLab:SaveConfig:InvalidUnits', 'unitDefs entries must be structs.');
-            end
-
-            if ~isscalar(cfg.maxIter) || ~isfinite(cfg.maxIter) || cfg.maxIter <= 0
-                error('MathLab:SaveConfig:InvalidSolver', 'maxIter must be a finite positive scalar.');
-            end
-            if ~isscalar(cfg.tolAbs) || ~isfinite(cfg.tolAbs) || cfg.tolAbs <= 0
-                error('MathLab:SaveConfig:InvalidSolver', 'tolAbs must be a finite positive scalar.');
-            end
-
-            if ~isstruct(cfg.unitPrefs)
-                error('MathLab:SaveConfig:InvalidUnits', 'unitPrefs must be a struct.');
-            end
-            if ~isscalar(cfg.logEveryN) || ~isfinite(cfg.logEveryN) || cfg.logEveryN < 0
-                error('MathLab:SaveConfig:InvalidSolverLog', 'logEveryN must be a finite nonnegative scalar.');
-            end
-            if ~(ischar(cfg.lastExportPath) || (isstring(cfg.lastExportPath) && isscalar(cfg.lastExportPath)))
-                error('MathLab:SaveConfig:InvalidPath', 'lastExportPath must be a text scalar.');
-            end
+            ui.ConfigManager.validateConfigPayload(cfg);
         end
 
         function ensureWritableDir(~, dirPath)
-            if ~(ischar(dirPath) || isstring(dirPath)) || strlength(string(dirPath)) == 0
-                error('MathLab:SaveConfig:InvalidPath', 'Output directory path must be a non-empty string.');
-            end
-            dirPath = char(string(dirPath));
-            if ~exist(dirPath, 'dir')
-                [ok,msg] = mkdir(dirPath);
-                if ~ok
-                    error('MathLab:SaveConfig:CreateDirFailed', ...
-                        'Could not create output directory "%s": %s', dirPath, msg);
-                end
-            end
-            if ~isfolder(dirPath)
-                error('MathLab:SaveConfig:InvalidPath', 'Output directory path is not a folder: %s', dirPath);
-            end
-            [fid,msg] = fopen(fullfile(dirPath, '.mathlab_write_test.tmp'), 'w');
-            if fid < 0
-                error('MathLab:SaveConfig:WritePermission', ...
-                    'Directory is not writable "%s": %s', dirPath, msg);
-            end
-            fclose(fid);
-            delete(fullfile(dirPath, '.mathlab_write_test.tmp'));
+            ui.AppUtils.ensureWritableDir(dirPath);
         end
 
         function setStatus(app, msg)
@@ -4894,51 +3366,15 @@ classdef MathLabApp < handle
     % =====================================================================
     methods (Access = private)
         function dirPath = ensureOutputDir(~, subfolder)
-            % Ensure output/<subfolder> exists and return the path
-            baseDir = fullfile(pwd, 'output');
-            if ~exist(baseDir, 'dir')
-                [ok,msg] = mkdir(baseDir);
-                if ~ok
-                    error('MathLab:OutputDir:CreateFailed', ...
-                        'Failed to create output directory "%s": %s', baseDir, msg);
-                end
-            end
-            dirPath = fullfile(baseDir, subfolder);
-            if ~exist(dirPath, 'dir')
-                [ok,msg] = mkdir(dirPath);
-                if ~ok
-                    error('MathLab:OutputDir:CreateFailed', ...
-                        'Failed to create output subdirectory "%s": %s', dirPath, msg);
-                end
-            end
-            if ~isfolder(dirPath)
-                error('MathLab:OutputDir:InvalidPath', 'Output path is not a directory: %s', dirPath);
-            end
+            dirPath = ui.AppUtils.ensureOutputDir(subfolder);
         end
 
         function fname = autoFileName(app, prefix, ext)
-            % Generate filename: <ProjectTitle>_<prefix>_YYYYMMDD_HHMMSS.<ext>
-            safeTitle = regexprep(app.projectTitle, '[^A-Za-z0-9_-]', '_');
-            stamp = datestr(now, 'yyyymmdd_HHMMSS'); %#ok
-            fname = sprintf('%s_%s_%s.%s', safeTitle, prefix, stamp, ext);
+            fname = ui.AppUtils.autoFileName(app.projectTitle, prefix, ext);
         end
 
         function writeErrorLog(app, prefix, logLines)
-            % Write error log to output/logs
-            try
-                logDir = app.ensureOutputDir('logs');
-                fname = app.autoFileName(prefix, 'txt');
-                fpath = fullfile(logDir, fname);
-                fid = fopen(fpath, 'w');
-                if fid >= 0
-                    for k = 1:numel(logLines)
-                        fprintf(fid, '%s\n', logLines{k});
-                    end
-                    fclose(fid);
-                end
-            catch
-                % Silently ignore logging failures
-            end
+            ui.AppUtils.writeErrorLog(app.projectTitle, prefix, logLines);
         end
     end
 end
