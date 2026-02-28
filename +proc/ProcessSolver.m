@@ -835,260 +835,32 @@ classdef ProcessSolver < handle
         end
 
         function J = fdJacobianSafe(obj, x, r0)
-            n = numel(x); m = numel(r0);
-
-            % Detect sparsity pattern on first call and compute column coloring
-            if isempty(obj.sparsityPattern)
-                obj.detectSparsityPattern(x, r0);
-            end
-
-            % Use graph-coloring compressed FD if coloring is available
-            if obj.nColors > 0 && obj.nColors < n
-                J = obj.fdJacobianCompressed(x, r0);
-                return
-            end
-
-            % Fallback: standard column-by-column FD
-            J = obj.fdJacobianColumnwise(x, r0);
+            ctx = obj.buildJacobianContext();
+            [J, obj.sparsityPattern, obj.columnColors, obj.nColors] = ...
+                proc.solver.JacobianEngine.fdJacobianSafe(x, r0, ctx);
         end
 
-        function J = fdJacobianColumnwise(obj, x, r0)
-            n = numel(x); m = numel(r0);
-            J = zeros(m,n);
-
-            % Pre-compute steps and central-difference flags
-            steps = zeros(n, 1);
-            isCentral = false(n, 1);
-            for k = 1:n
-                steps(k) = obj.fdStepForColumn(k, x(k));
-                isCentral(k) = obj.useCentralDifferenceForColumn(k);
-            end
-
-            % Serial path (standard)
-            for k = 1:n
-                step = steps(k);
-                if isCentral(k)
-                    xPlus = x;
-                    xMinus = x;
-                    xPlus(k) = xPlus(k) + step;
-                    xMinus(k) = xMinus(k) - step;
-                    [rPlus, okPlus] = obj.tryResiduals(xPlus);
-                    [rMinus, okMinus] = obj.tryResiduals(xMinus);
-
-                    if okPlus && okMinus
-                        J(:,k) = (rPlus - rMinus) / (2 * step);
-                    elseif okPlus
-                        J(:,k) = (rPlus - r0) / step;
-                    elseif okMinus
-                        J(:,k) = (r0 - rMinus) / step;
-                    else
-                        J(:,k) = 0;
-                    end
-                else
-                    x2 = x;
-                    x2(k) = x2(k) + step;
-                    [r2, ok] = obj.tryResiduals(x2);
-                    if ~ok
-                        J(:,k) = 0;
-                    else
-                        J(:,k) = (r2 - r0) / step;
-                    end
-                end
-            end
-        end
-
-        function J = fdJacobianCompressed(obj, x, r0)
-            % Graph-coloring compressed finite differences.
-            % Columns with non-overlapping sparsity patterns share the same
-            % perturbation, reducing residual evaluations from n to nColors.
-            n = numel(x); m = numel(r0);
-            J = zeros(m, n);
-
-            for c = 1:obj.nColors
-                cols = find(obj.columnColors == c);
-                if isempty(cols), continue; end
-
-                % Compute per-column steps
-                steps = zeros(numel(cols), 1);
-                for j = 1:numel(cols)
-                    steps(j) = obj.fdStepForColumn(cols(j), x(cols(j)));
-                end
-
-                % Perturb all same-color columns simultaneously
-                xPert = x;
-                for j = 1:numel(cols)
-                    xPert(cols(j)) = xPert(cols(j)) + steps(j);
-                end
-
-                [rPert, okPert] = obj.tryResiduals(xPert);
-                if ~okPert
-                    % Fall back to column-by-column for this color group
-                    for j = 1:numel(cols)
-                        k = cols(j);
-                        x2 = x;
-                        x2(k) = x2(k) + steps(j);
-                        [r2, ok] = obj.tryResiduals(x2);
-                        if ok
-                            rows = obj.sparsityPattern(:, k);
-                            J(rows, k) = (r2(rows) - r0(rows)) / steps(j);
-                        end
-                    end
-                    continue
-                end
-
-                % Extract columns from compressed perturbation
-                for j = 1:numel(cols)
-                    k = cols(j);
-                    rows = obj.sparsityPattern(:, k);
-                    J(rows, k) = (rPert(rows) - r0(rows)) / steps(j);
-                end
-            end
-        end
-
-        function step = fdStepForColumn(obj, colIdx, xVal)
-            % Adaptive FD step sizing based on variable type (B6)
-            if colIdx <= numel(obj.map)
-                varType = obj.map(colIdx).var;
-            else
-                varType = '?';
-            end
-            switch varType
-                case 'a'
-                    % Composition logits: larger relative step for better sensitivity
-                    step = 1e-6 * max(1, abs(xVal));
-                case 'T'
-                    step = obj.fdEps * max(1, abs(xVal));
-                case 'P'
-                    step = obj.fdEps * max(1, abs(xVal));
-                otherwise
-                    step = obj.fdEps * max(1, abs(xVal));
-            end
-        end
-
-        function detectSparsityPattern(obj, x, r0)
-            % Detect Jacobian sparsity by probing each column and recording
-            % which rows change. Then compute greedy column coloring.
-            n = numel(x); m = numel(r0);
-            sp = false(m, n);
-            dropTol = 1e-14;
-
-            for k = 1:n
-                step = obj.fdStepForColumn(k, x(k));
-                x2 = x;
-                x2(k) = x2(k) + step;
-                [r2, ok] = obj.tryResiduals(x2);
-                if ok
-                    sp(:, k) = abs(r2 - r0) > dropTol * max(1, abs(r0));
-                else
-                    sp(:, k) = true;  % conservative: assume dense column
-                end
-            end
-
-            obj.sparsityPattern = sp;
-
-            % Greedy distance-2 column coloring
-            obj.columnColors = obj.greedyColumnColoring(sp);
-            obj.nColors = max(obj.columnColors);
-            nnzFrac = nnz(sp) / (m * n);
-            obj.log('Jacobian sparsity: %d x %d, nnz=%.1f%%, %d colors (vs %d columns, %.1fx compression)', ...
-                m, n, nnzFrac*100, obj.nColors, n, n / max(obj.nColors, 1));
-        end
-
-        function colors = greedyColumnColoring(~, sp)
-            % Greedy distance-2 column coloring for compressed FD.
-            % Two columns conflict if they share any nonzero row.
-            n = size(sp, 2);
-            colors = zeros(n, 1);
-            for k = 1:n
-                rowsK = sp(:, k);
-                % Find columns that conflict with k (share a nonzero row)
-                conflictColors = zeros(0, 1);
-                for j = 1:k-1
-                    if colors(j) > 0 && any(rowsK & sp(:, j))
-                        conflictColors(end+1) = colors(j); %#ok<AGROW>
-                    end
-                end
-                % Assign smallest unused color
-                c = 1;
-                usedColors = unique(conflictColors);
-                while any(c == usedColors)
-                    c = c + 1;
-                end
-                colors(k) = c;
-            end
+        function ctx = buildJacobianContext(obj)
+            ctx = struct( ...
+                'tryResidualsFcn', @(xp) obj.tryResiduals(xp), ...
+                'fdEps', obj.fdEps, ...
+                'map', obj.map, ...
+                'fdScheme', obj.fdScheme, ...
+                'fdCentralColumns', obj.fdCentralColumns, ...
+                'sparsityPattern', obj.sparsityPattern, ...
+                'columnColors', obj.columnColors, ...
+                'nColors', obj.nColors);
         end
 
         function [accepted, x_new, r_new, alpha, bt, stagnationReject] = backtrackingLineSearch(obj, x, dx, rnU, rnW, w)
-            alpha = obj.damping;
-            bt = 0;
-            accepted = false;
-            stagnationReject = false;
-            x_new = x;
-            r_new = nan(size(dx));
-
-            decreaseTol = 1e-8;
-            noiseTol = 1e-14;
-            strictTargetW = rnW * (1 - decreaseTol);
-            % Keep weighted residual as the primary acceptance criterion.
-            % Permit a small unweighted-residual increase to avoid
-            % rejecting productive steps when scales are heterogeneous.
-            maxTargetU = rnU * (1 + max(0, obj.lineSearchMaxUnweightedIncreaseRatio));
-            flatSeen = false;
-
-            while bt < 30
-                xCand = x + alpha*dx;
-                [rCand, okCand] = obj.tryResiduals(xCand);
-                if okCand
-                    rnUCand = norm(rCand);
-                    rnWCand = norm(w .* rCand);
-                    % Accept if weighted norm strictly decreases and the
-                    % unweighted norm does not grow beyond a small guard.
-                    if rnWCand <= strictTargetW && rnUCand <= maxTargetU
-                        accepted = true;
-                        x_new = xCand;
-                        r_new = rCand;
-                        return
-                    end
-
-                    if rnWCand <= rnW * (1 + noiseTol) || rnUCand <= rnU * (1 + noiseTol)
-                        flatSeen = true;
-                    end
-                end
-                alpha = alpha * 0.5;
-                bt = bt + 1;
-                if alpha < 1e-10
-                    break;
-                end
-            end
-
-            stagnationReject = flatSeen;
+            [accepted, x_new, r_new, alpha, bt, stagnationReject] = ...
+                proc.solver.LineSearch.backtrackingLineSearch( ...
+                    @(xp) obj.tryResiduals(xp), x, dx, rnU, rnW, w, ...
+                    obj.damping, obj.lineSearchMaxUnweightedIncreaseRatio);
         end
 
         function dx = solveLinearLM(~, J, b, w)
-            Jw = J .* w;
-            bw = b .* w;
-            n = size(J,2);
-            JTJ = Jw.' * Jw;  JTb = Jw.' * bw;
-            lambda = 1e-6 * max(1, trace(JTJ)/max(1,n));
-            I = eye(n);
-            for it = 1:12
-                dx = (JTJ + lambda*I) \ JTb;
-                if all(isfinite(dx)), return; end
-                lambda = lambda * 10;
-            end
-            dx = zeros(n,1);
-        end
-
-        function tf = useCentralDifferenceForColumn(obj, idx)
-            scheme = lower(strtrim(char(obj.fdScheme)));
-            switch scheme
-                case 'central'
-                    tf = true;
-                case 'mixed'
-                    tf = any(idx == obj.fdCentralColumns);
-                otherwise
-                    tf = false;
-            end
+            dx = proc.solver.LineSearch.solveLinearLM(J, b, w);
         end
 
         function w = buildEquationWeights(obj, eqNames, nEq, r0)
@@ -1283,422 +1055,88 @@ classdef ProcessSolver < handle
 
 
         function v = structFieldOr(~, s, fieldName, defaultValue)
-            if isfield(s, fieldName)
-                v = s.(fieldName);
-            else
-                v = defaultValue;
-            end
+            v = proc.solver.VariablePacker.structFieldOr(s, fieldName, defaultValue);
         end
 
-        function tf = isUnknownScalar(~,s,fn)
-            if isprop(s,'known')&&isstruct(s.known)&&isfield(s.known,fn)
-                v=s.known.(fn);
-                if islogical(v)&&isscalar(v), tf=~v; else, tf=true; end
-            else, tf=true;
-            end
+        function tf = isUnknownScalar(~, s, fn)
+            tf = proc.solver.VariablePacker.isUnknownScalar(s, fn);
         end
 
-        function tf = anyYUnknown(obj,s)
-            unknownIdx = obj.unknownCompositionIndices(s);
-            tf = ~isempty(unknownIdx);
+        function tf = anyYUnknown(obj, s)
+            tf = proc.solver.VariablePacker.anyYUnknown(s, obj.ns);
         end
 
         function knownMask = compositionKnownMask(obj, s)
-            if isprop(s,'known')&&isstruct(s.known)&&isfield(s.known,'y')
-                ky=s.known.y;
-                if islogical(ky)&&numel(ky)==obj.ns
-                    knownMask = logical(reshape(ky,1,[]));
-                    return;
-                end
-            end
-
-            knownMask = false(1,obj.ns);
+            knownMask = proc.solver.VariablePacker.compositionKnownMask(s, obj.ns);
         end
 
         function unknownIdx = unknownCompositionIndices(obj, s)
-            knownMask = obj.compositionKnownMask(s);
-            unknownIdx = find(~knownMask);
+            unknownIdx = proc.solver.VariablePacker.unknownCompositionIndices(s, obj.ns);
         end
 
         function [packIdx, a0] = initialCompositionLogits(obj, s)
-            unknownIdx = obj.unknownCompositionIndices(s);
-            nUnknown = numel(unknownIdx);
-            if nUnknown <= 1
-                packIdx = [];
-                a0 = [];
-                return;
-            end
-
-            y0 = s.y;
-            if isempty(y0) || any(~isfinite(y0)) || numel(y0) ~= obj.ns
-                y0 = ones(1,obj.ns) / obj.ns;
-            end
-            y0 = max(reshape(y0,1,[]), 0);
-
-            knownMask = obj.compositionKnownMask(s);
-            knownSum = sum(y0(knownMask));
-            remaining = max(1 - knownSum, 0);
-
-            yUnknown = y0(unknownIdx);
-            yUnknown = max(yUnknown, 0);
-            if sum(yUnknown) <= 0
-                yUnknown = ones(1,nUnknown) / nUnknown;
-            else
-                yUnknown = yUnknown / sum(yUnknown);
-            end
-
-            % Represent unknown composition as remaining * softmax(aUnknown).
-            % Pack only first (nUnknown-1) entries and anchor last one to 0.
-            if remaining > 0
-                pUnknown = yUnknown;
-            else
-                pUnknown = ones(1,nUnknown) / nUnknown;
-            end
-
-            aUnknown = log(max(pUnknown,1e-12));
-            anchor = aUnknown(end);
-            aUnknown = aUnknown - anchor;
-
-            packIdx = unknownIdx(1:end-1);
-            a0 = aUnknown(1:end-1).';
+            [packIdx, a0] = proc.solver.VariablePacker.initialCompositionLogits(s, obj.ns);
         end
 
         function y = reconstructComposition(obj, s, packedA)
-            y = s.y;
-            if isempty(y) || any(~isfinite(y)) || numel(y) ~= obj.ns
-                y = ones(obj.ns,1) / obj.ns;
-            end
-            y = reshape(y,[],1);
-
-            knownMask = obj.compositionKnownMask(s);
-            unknownIdx = find(~knownMask);
-            nUnknown = numel(unknownIdx);
-            if nUnknown == 0
-                y = obj.normalizeSimplex(y);
-                obj.warnIfCompositionNotNormalized(s, y);
-                return;
-            end
-
-            knownSum = sum(y(knownMask));
-            remaining = 1 - knownSum;
-
-            if nUnknown == 1
-                y(unknownIdx) = remaining;
-                y = y / sum(y);
-                obj.warnIfCompositionNotNormalized(s, y);
-                return;
-            end
-
-            % softmax() expects only the packed free logits (nUnknown-1).
-            % It appends the anchored final logit internally.
-            aUnknown = zeros(nUnknown-1,1);
-            packIdx = unknownIdx(1:end-1);
-            for j = 1:numel(packIdx)
-                comp = packIdx(j);
-                if isfinite(packedA(comp))
-                    aUnknown(j) = packedA(comp);
-                end
-            end
-
-            % Gauge-fixed softmax: last unknown component is anchored to 0,
-            % so only (nUnknown-1) independent logits are required.
-            y(unknownIdx) = remaining .* obj.softmax(aUnknown);
-            y = y / sum(y);
-            obj.warnIfCompositionNotNormalized(s, y);
+            y = proc.solver.VariablePacker.reconstructComposition(s, packedA, obj.ns);
         end
 
-        function v = safeInit(~,c,fb)
-            if isempty(c)||isnan(c), v=fb; else, v=c; end
+        function v = safeInit(~, c, fb)
+            v = proc.solver.VariablePacker.safeInit(c, fb);
         end
 
-        function y = softmax(~,aPacked)
-            % Reconstruct full logits by anchoring the final component at 0,
-            % then apply stable shift-by-max softmax.
-            aFull = [aPacked(:); 0];
-            aFull = aFull - max(aFull);
-            e = exp(aFull);
-            y = e / sum(e);
+        function y = softmax(~, aPacked)
+            y = proc.solver.VariablePacker.softmax(aPacked);
         end
 
-        function y = normalizeSimplex(~,y)
-            y = y(:);
-            s = sum(y);
-            if ~isfinite(s) || s == 0
-                y = ones(numel(y),1) / numel(y);
-            else
-                y = y / s;
-            end
+        function y = normalizeSimplex(~, y)
+            y = proc.solver.VariablePacker.normalizeSimplex(y);
         end
 
         function warnIfCompositionNotNormalized(obj, s, y)
-            if obj.debugLevel < 1
-                return
-            end
-            sumY = sum(y);
-            delta = sumY - 1;
-            if isfinite(delta) && abs(delta) > 1e-10
-                fprintf(obj.debugOut, 'WARN composition normalization drift: stream=%s, sum(y)-1=%+.3e\n', ...
-                    string(s.name), delta);
-            end
+            proc.solver.SolverDiagnostics.warnIfCompositionNotNormalized(s, y, obj.debugLevel, obj.debugOut);
         end
 
         function debugPrintMixerCompositionConsistency(obj, r, dbg, context)
-            [mixer, dominantEq, dominantVal] = obj.findDominantMixer(r);
-            if isempty(mixer)
-                return
-            end
-
-            fprintf(dbg.out, 'Composition normalization + component-flow consistency (%s):\n', context);
-            fprintf(dbg.out, '  Dominant mixer: %s (eq %d, r=%+.3e)\n', string(mixer.describe()), dominantEq, dominantVal);
-
-            streamsToReport = [mixer.inlets(:); {mixer.outlet}];
-            for i = 1:numel(streamsToReport)
-                s = streamsToReport{i};
-                y = s.y(:);
-                sumY = sum(y);
-                minY = min(y);
-                maxY = max(y);
-                compFlowSum = sum(s.n_dot .* y);
-                diffFlow = compFlowSum - s.n_dot;
-                fprintf(dbg.out, '  %s: sum(y)=%.15f (sum(y)-1=%+.3e) min=%.6e max=%.6e\n', ...
-                    string(s.name), sumY, sumY - 1, minY, maxY);
-                fprintf(dbg.out, '      n_dot=%.6e, sum(n_dot*y)=%.6e, diff=%+.3e\n', ...
-                    s.n_dot, compFlowSum, diffFlow);
-            end
+            proc.solver.SolverDiagnostics.debugPrintMixerCompositionConsistency(r, dbg, obj.units, context);
         end
 
         function issues = detectKnownSpecConflicts(obj)
-            issues = strings(0,1);
-            for u = 1:numel(obj.units)
-                unit = obj.units{u};
-                uName = string(class(unit));
-                if ismethod(unit, 'describe')
-                    try
-                        uName = string(unit.describe());
-                    catch
-                        uName = string(class(unit));
-                    end
-                end
-
-                if isprop(unit, 'inlet') && isprop(unit, 'outlet')
-                    sIn = unit.inlet;
-                    sOut = unit.outlet;
-
-                    if obj.isKnownFlagTrue(sIn, 'T') && obj.isKnownFlagTrue(sOut, 'T')
-                        if abs(sOut.T - sIn.T) > 1e-9
-                            issues(end+1,1) = sprintf('%s has both inlet/outlet T marked Known but T_out-T_in=%+.3e K.', uName, sOut.T - sIn.T);
-                        end
-                    end
-                    if obj.isKnownFlagTrue(sIn, 'P') && obj.isKnownFlagTrue(sOut, 'P')
-                        if abs(sOut.P - sIn.P) > 1e-6
-                            issues(end+1,1) = sprintf('%s has both inlet/outlet P marked Known but P_out-P_in=%+.3e Pa.', uName, sOut.P - sIn.P);
-                        end
-                    end
-                end
-
-                if isprop(unit, 'Tout') && isfinite(unit.Tout) && isprop(unit, 'outlet')
-                    sOut = unit.outlet;
-                    if obj.isKnownFlagTrue(sOut, 'T') && abs(sOut.T - unit.Tout) > 1e-9
-                        issues(end+1,1) = sprintf('%s Tout=%.6g K conflicts with Known outlet T=%.6g K on stream %s.', ...
-                            uName, unit.Tout, sOut.T, string(sOut.name));
-                    end
-                end
-
-                if isprop(unit, 'Pout') && isfinite(unit.Pout) && isprop(unit, 'outlet')
-                    sOut = unit.outlet;
-                    if obj.isKnownFlagTrue(sOut, 'P') && abs(sOut.P - unit.Pout) > 1e-6
-                        issues(end+1,1) = sprintf('%s Pout=%.6g Pa conflicts with Known outlet P=%.6g Pa on stream %s.', ...
-                            uName, unit.Pout, sOut.P, string(sOut.name));
-                    end
-                end
-            end
+            issues = proc.solver.SolverDiagnostics.detectKnownSpecConflicts(obj.streams, obj.units);
         end
 
         function tf = isKnownFlagTrue(~, s, field)
-            tf = false;
-            if ~(isprop(s,'known') && isstruct(s.known) && isfield(s.known, field))
-                return
-            end
-            v = s.known.(field);
-            tf = islogical(v) && isscalar(v) && v;
+            tf = proc.solver.SolverDiagnostics.isKnownFlagTrue(s, field);
         end
 
         function checkInitialJacobianConnectivity(obj, x, r0)
-            if isempty(x)
-                return
-            end
-
-            J0 = obj.fdJacobianSafe(x, r0);
-            colNormInf = max(abs(J0), [], 1);
-            dead = find(colNormInf <= obj.jacobianDeadColumnTol | ~isfinite(colNormInf));
-            if isempty(dead)
-                return
-            end
-
-            % Composition logits can appear disconnected at initialization
-            % when the associated stream flow starts near zero. In that
-            % regime component-flow equations are numerically flat in y,
-            % but the DOF is still physically connected once n_dot lifts.
-            keep = true(size(dead));
-            for i = 1:numel(dead)
-                k = dead(i);
-                m = obj.map(k);
-                if strcmp(m.var, 'a') && obj.isNearZeroFlowStream(m.streamIndex)
-                    keep(i) = false;
-                    obj.log(['Jacobian dead-column candidate ignored: x(%d) %s ' ...
-                        '(near-zero stream flow n_dot=%.3e).'], ...
-                        k, obj.describeUnknown(m), obj.streams{m.streamIndex}.n_dot);
-                end
-            end
-
-            dead = dead(keep);
-            if isempty(dead)
-                return
-            end
-
-            msgLines = strings(numel(dead),1);
-            for i = 1:numel(dead)
-                k = dead(i);
-                msgLines(i) = obj.describeUnknown(obj.map(k));
-                obj.log('Jacobian dead-column candidate: x(%d) %s (||J(:,k)||_inf=%.3e)', ...
-                    k, msgLines(i), colNormInf(k));
-            end
-
-            msg = sprintf(['Detected %d unknown(s) with near-zero initial Jacobian columns. ' ...
-                'This indicates disconnected DOFs, conflicting constraints, or numerically flat equations.'], numel(dead));
-            if obj.failOnJacobianDeadColumns
-                error('%s Unknown(s): %s', msg, strjoin(cellstr(msgLines), '; '));
-            else
-                warning('%s Unknown(s): %s', msg, strjoin(cellstr(msgLines), '; '));
-            end
+            proc.solver.SolverDiagnostics.checkInitialJacobianConnectivity( ...
+                x, r0, @(xp, rp) obj.fdJacobianSafe(xp, rp), obj.map, obj.streams, ...
+                obj.nDotMin, obj.jacobianDeadColumnTol, obj.failOnJacobianDeadColumns, ...
+                @(msg, varargin) obj.log(msg, varargin{:}));
         end
 
         function tf = isNearZeroFlowStream(obj, streamIndex)
-            tf = false;
-            if ~isfinite(streamIndex) || streamIndex < 1 || streamIndex > numel(obj.streams)
-                return
-            end
-
-            s = obj.streams{streamIndex};
-            if ~isprop(s, 'n_dot') || ~isfinite(s.n_dot)
-                return
-            end
-
-            tf = abs(s.n_dot) <= max(1e3 * obj.nDotMin, 1e-9);
+            tf = proc.solver.SolverDiagnostics.isNearZeroFlowStream(streamIndex, obj.streams, obj.nDotMin);
         end
 
         function txt = describeUnknown(~, m)
-            if strcmp(m.var, 'u')
-                txt = sprintf('[unit %d] manipulated %s.%s', m.unitIndex, class(m.owner), m.field);
-                return
-            end
-
-            si = m.streamIndex;
-            switch m.var
-                case 'z'
-                    txt = sprintf('[stream %d] n_dot(log)', si);
-                case 'a'
-                    txt = sprintf('[stream %d] composition logit comp=%d', si, m.subIndex);
-                case 'T'
-                    txt = sprintf('[stream %d] temperature', si);
-                case 'P'
-                    txt = sprintf('[stream %d] pressure', si);
-                otherwise
-                    txt = sprintf('[stream %d] var=%s', si, m.var);
-            end
+            txt = proc.solver.SolverDiagnostics.describeUnknown(m);
         end
 
         function detail = buildFailureReport(obj, ME, stage, iter, r, w, eqNames)
-            header = "HERE IS WHAT HAPPENED";
-            lines = strings(0,1);
-            lines(end+1,1) = header;
-            lines(end+1,1) = string(repmat('=', 1, strlength(header)));
-            lines(end+1,1) = sprintf('Failure stage: %s', stage);
-            lines(end+1,1) = sprintf('Iteration: %d', iter);
-            lines(end+1,1) = sprintf('Reason: %s', string(ME.message));
-            lines(end+1,1) = sprintf('Residual evaluations: %d', obj.residualEvalCount);
-
-            if ~isempty(ME.stack)
-                lines(end+1,1) = 'Stack trace (most recent first):';
-                nStack = min(6, numel(ME.stack));
-                for i = 1:nStack
-                    st = ME.stack(i);
-                    lines(end+1,1) = sprintf('  at %s (line %d)', string(st.name), st.line);
-                end
-            end
-
-            if ~isempty(r)
-                ru = norm(r);
-                if ~isempty(w)
-                    rw = norm(w .* r);
-                else
-                    rw = ru;
-                end
-                lines(end+1,1) = sprintf('Residual norms: ||r||=%.6e, ||W*r||=%.6e', ru, rw);
-                lines(end+1,1) = obj.summarizeTopResiduals(r, eqNames, 10);
-            else
-                lines(end+1,1) = 'Residual norms: unavailable (failure occurred before initial residual evaluation).';
-            end
-
-            lines(end+1,1) = 'Recent solver log lines:';
-            nLog = numel(obj.logLines);
-            nTail = min(12, nLog);
-            if nTail == 0
-                lines(end+1,1) = '  (none)';
-            else
-                for i = nLog-nTail+1:nLog
-                    lines(end+1,1) = "  - " + obj.logLines(i);
-                end
-            end
-
-            detail = strjoin(lines, newline);
+            detail = proc.solver.SolverDiagnostics.buildFailureReport( ...
+                ME, stage, iter, r, w, eqNames, obj.logLines, obj.residualEvalCount);
         end
 
         function txt = summarizeTopResiduals(~, r, eqNames, topN)
-            if nargin < 4 || isempty(topN)
-                topN = 10;
-            end
-            n = min([numel(r), max(1, topN)]);
-            if n == 0
-                txt = 'Top residuals: none.';
-                return
-            end
-
-            [~, order] = sort(abs(r), 'descend');
-            idx = order(1:n);
-            parts = strings(n,1);
-            for i = 1:n
-                k = idx(i);
-                label = sprintf('eq %d', k);
-                if k <= numel(eqNames) && strlength(eqNames(k)) > 0
-                    label = char(eqNames(k));
-                end
-                parts(i) = sprintf('[%d] %s = %+.3e', k, label, r(k));
-            end
-            txt = "Top residuals: " + strjoin(parts, '; ');
+            if nargin < 4, topN = 10; end
+            txt = proc.solver.SolverDiagnostics.summarizeTopResiduals(r, eqNames, topN);
         end
 
         function [dominantMixer, eqIdx, eqVal] = findDominantMixer(obj, r)
-            dominantMixer = [];
-            eqIdx = NaN;
-            eqVal = NaN;
-            cursor = 1;
-            bestAbs = -Inf;
-            for u = 1:numel(obj.units)
-                unit = obj.units{u};
-                nEq = numel(unit.equations());
-                idx = cursor:(cursor + nEq - 1);
-                if isa(unit, 'proc.units.Mixer') && ~isempty(idx)
-                    [localAbs, localPos] = max(abs(r(idx)));
-                    if isfinite(localAbs) && localAbs > bestAbs
-                        bestAbs = localAbs;
-                        dominantMixer = unit;
-                        eqIdx = idx(localPos);
-                        eqVal = r(eqIdx);
-                    end
-                end
-                cursor = cursor + nEq;
-            end
+            [dominantMixer, eqIdx, eqVal] = proc.solver.SolverDiagnostics.findDominantMixer(r, obj.units);
         end
     end
 end
