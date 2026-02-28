@@ -123,11 +123,7 @@ classdef ProcessSolver < handle
         totalEqs double = 0       % total number of equations
 
         % Pre-computed unpack index maps (populated at packUnknowns)
-        unpackZ struct = struct('xIdx',{},'sIdx',{})
-        unpackA struct = struct('xIdx',{},'sIdx',{},'comp',{})
-        unpackT struct = struct('xIdx',{},'sIdx',{})
-        unpackP struct = struct('xIdx',{},'sIdx',{})
-        unpackU struct = struct('xIdx',{},'owner',{},'field',{},'sub',{},'lb',{},'ub',{})
+        unpackMaps struct = struct()
 
         % Equation type classification for fast weight building
         eqTypes double = []       % 0=default,1=flow,2=temperature,3=pressure
@@ -628,45 +624,13 @@ classdef ProcessSolver < handle
         end
 
         function nDisabled = configureNormalizationConstraints(obj)
-            nDisabled = 0;
-            for u = 1:numel(obj.units)
-                unit = obj.units{u};
-                if isprop(unit, 'includeNormalizationConstraints')
-                    unit.includeNormalizationConstraints = ~obj.removeRedundantNormalizationConstraints;
-                    if obj.removeRedundantNormalizationConstraints
-                        nDisabled = nDisabled + 1;
-                    end
-                end
-            end
+            nDisabled = proc.solver.SolverDiagnostics.configureNormalizationConstraints( ...
+                obj.units, obj.removeRedundantNormalizationConstraints);
         end
 
         function [J, accepted] = tryBroydenUpdate(obj, J, s, y)
-            accepted = false;
-            s2 = s.' * s;
-            if ~(isfinite(s2) && s2 > obj.broydenMinStepNorm2)
-                return
-            end
-
-            Js = J * s;
-            u = (y - Js) / s2;
-            Jcand = J + u * s.';
-
-            if any(~isfinite(Jcand(:)))
-                return
-            end
-
-            % Cheap quality check: verify the updated Jacobian can produce
-            % a finite linear solve. Avoids the O(n^3) rcond computation.
-            n = size(Jcand, 2);
-            JTJ = Jcand.' * Jcand;
-            lambda = 1e-12 * max(1, trace(JTJ) / max(1, n));
-            dxTest = (JTJ + lambda * eye(n)) \ (Jcand.' * y);
-            if ~all(isfinite(dxTest))
-                return
-            end
-
-            J = Jcand;
-            accepted = true;
+            [J, accepted] = proc.solver.JacobianEngine.tryBroydenUpdate( ...
+                J, s, y, obj.broydenMinStepNorm2, obj.broydenMinRcond);
         end
 
         function fireCallback(obj, iter, rNorm)
@@ -719,119 +683,20 @@ classdef ProcessSolver < handle
         end
 
         function dbg = resolveDebugOptions(obj)
-            dbg = struct( ...
-                'level', max(0, floor(obj.debugLevel)), ...
-                'topN', max(1, floor(obj.debugTopN)), ...
-                'every', max(0, floor(obj.debugEvery)), ...
-                'out', obj.debugOut, ...
-                'eqNames', logical(obj.debugEqNames));
-
-            if obj.debug && dbg.level < 1
-                dbg.level = 1;
-            end
-
-            if isstruct(obj.solverSettings) && isfield(obj.solverSettings, 'debugStruct')
-                ds = obj.solverSettings.debugStruct;
-                if isstruct(ds)
-                    if isfield(ds, 'level'),   dbg.level = max(dbg.level, floor(ds.level)); end
-                    if isfield(ds, 'topN'),    dbg.topN = max(1, floor(ds.topN)); end
-                    if isfield(ds, 'every'),   dbg.every = max(0, floor(ds.every)); end
-                    if isfield(ds, 'out'),     dbg.out = ds.out; end
-                    if isfield(ds, 'eqNames'), dbg.eqNames = logical(ds.eqNames); end
-                end
-            end
-
-            envLevel = str2double(getenv('MATHLAB_DEBUG'));
-            if isfinite(envLevel) && envLevel > 0
-                dbg.level = max(dbg.level, floor(envLevel));
-            end
+            dbg = proc.solver.SolverDiagnostics.resolveDebugOptions(obj);
         end
 
-        function debugPrintIter(obj, iter, rn2, r, dx, alpha, bt, dbg)
-            rnInf = norm(r, inf);
-            dxn = norm(dx, 2);
-            [maxVal, maxIdx] = max(abs(r));
-            if isempty(maxIdx), maxIdx = 0; maxVal = NaN; maxSigned = NaN;
-            else, maxSigned = r(maxIdx);
-            end
-
-            fprintf(dbg.out, 'Iter %3d: ||r||2=%.3e  ||r||inf=%.3e  ||dx||=%.3e  alpha=%.3e  bt=%d  maxEq=%d (|r|=%.3e, r=%+.3e)\n', ...
-                iter, rn2, rnInf, dxn, alpha, bt, maxIdx, maxVal, maxSigned);
+        function debugPrintIter(~, iter, rn2, r, dx, alpha, bt, dbg)
+            proc.solver.SolverDiagnostics.debugPrintIter(dbg, iter, rn2, r, dx, alpha, bt);
         end
 
-        function debugPrintTopResiduals(obj, r, dbg, eqNames, context)
-            if isempty(r)
-                return
-            end
-
-            n = min(numel(r), dbg.topN);
-            [~, order] = sort(abs(r), 'descend');
-            topIdx = order(1:n);
-
-            fprintf(dbg.out, 'Top %d residual components (%s):\n', n, context);
-            for i = 1:n
-                idx = topIdx(i);
-                label = sprintf('eq %4d', idx);
-                if dbg.eqNames && idx <= numel(eqNames) && strlength(eqNames(idx)) > 0
-                    label = char(eqNames(idx));
-                end
-                fprintf(dbg.out, '  [%3d] %-40s : %+.3e\n', idx, label, r(idx));
-            end
+        function debugPrintTopResiduals(~, r, dbg, eqNames, context)
+            proc.solver.SolverDiagnostics.debugPrintTopResiduals(dbg, r, eqNames, context);
         end
 
         function eqNames = buildEquationLabels(obj)
-            eqNames = strings(0,1);
-            types = zeros(0,1);  % 0=default, 1=flow, 2=temperature, 3=pressure
-            for u = 1:numel(obj.units)
-                unit = obj.units{u};
-                % Use cached equation count instead of calling equations() again
-                if ~isempty(obj.eqCounts) && u <= numel(obj.eqCounts)
-                    nEq = obj.eqCounts(u);
-                else
-                    nEq = numel(unit.equations());
-                end
-
-                labels = strings(nEq,1);
-                if ismethod(unit, 'equationLabels')
-                    try
-                        labels = string(unit.equationLabels());
-                    catch
-                        labels = strings(nEq,1);
-                    end
-                end
-
-                if numel(labels) ~= nEq
-                    labels = strings(nEq,1);
-                end
-
-                unitName = class(unit);
-                if ismethod(unit, 'describe')
-                    try
-                        unitName = string(unit.describe());
-                    catch
-                        unitName = string(class(unit));
-                    end
-                end
-
-                localTypes = zeros(nEq, 1);
-                for i = 1:nEq
-                    if strlength(labels(i)) == 0
-                        labels(i) = sprintf('%s: eq %d', char(unitName), i);
-                    end
-                    % Classify equation type from label (done once, not per-weight-build)
-                    lbl = lower(char(labels(i)));
-                    if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
-                        localTypes(i) = 3;
-                    elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
-                        localTypes(i) = 2;
-                    elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
-                        localTypes(i) = 1;
-                    end
-                end
-                eqNames = [eqNames; labels(:)]; %#ok<AGROW>
-                types = [types; localTypes(:)]; %#ok<AGROW>
-            end
-            obj.eqTypes = types;
+            [eqNames, obj.eqTypes] = proc.solver.SolverDiagnostics.buildEquationLabels( ...
+                obj.units, obj.eqCounts);
         end
 
         function J = fdJacobianSafe(obj, x, r0)
@@ -864,250 +729,43 @@ classdef ProcessSolver < handle
         end
 
         function w = buildEquationWeights(obj, eqNames, nEq, r0)
-            if ~isempty(obj.equationWeights)
-                ew = obj.equationWeights(:);
-                if isscalar(ew)
-                    w = repmat(ew, nEq, 1);
-                elseif numel(ew) == nEq
-                    w = ew;
-                else
-                    error('equationWeights must be scalar or length %d.', nEq);
-                end
-            elseif obj.autoScale && nargin >= 4 && ~isempty(r0)
-                % Derive per-equation weights from initial residual
-                % magnitudes so that all equations contribute equally.
-                mag = abs(r0(1:min(nEq, numel(r0))));
-                w = 1 ./ max(mag, obj.autoScaleMinMagnitude);
-                if numel(w) < nEq
-                    w(end+1:nEq) = 1;
-                end
-
-                % Cap dynamic range so one tiny initial residual cannot
-                % dominate the weighted merit function and mislead line
-                % search acceptance.
-                wMin = min(w);
-                wMax = wMin * max(1, obj.autoScaleMaxWeightFactor);
-                w = min(w, wMax);
-            else
-                % Use pre-classified equation types for fast weight assignment
-                w = ones(nEq,1) / max(obj.defaultResidualScale, eps);
-                if ~isempty(obj.eqTypes) && numel(obj.eqTypes) == nEq
-                    wFlow = 1 / max(obj.flowResidualScale, eps);
-                    wTemp = 1 / max(obj.temperatureResidualScale, eps);
-                    wPres = 1 / max(obj.pressureResidualScale, eps);
-                    w(obj.eqTypes == 1) = wFlow;
-                    w(obj.eqTypes == 2) = wTemp;
-                    w(obj.eqTypes == 3) = wPres;
-                else
-                    % Fallback: string matching (slow path)
-                    for i = 1:nEq
-                        lbl = lower(char(eqNames(min(i, numel(eqNames)))));
-                        if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
-                            w(i) = 1 / max(obj.pressureResidualScale, eps);
-                        elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
-                            w(i) = 1 / max(obj.temperatureResidualScale, eps);
-                        elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
-                            w(i) = 1 / max(obj.flowResidualScale, eps);
-                        end
-                    end
-                end
-            end
-            w(~isfinite(w) | w <= 0) = 1;
+            opts = struct( ...
+                'equationWeights', obj.equationWeights, ...
+                'autoScale', obj.autoScale, ...
+                'autoScaleMinMagnitude', obj.autoScaleMinMagnitude, ...
+                'autoScaleMaxWeightFactor', obj.autoScaleMaxWeightFactor, ...
+                'defaultResidualScale', obj.defaultResidualScale, ...
+                'flowResidualScale', obj.flowResidualScale, ...
+                'temperatureResidualScale', obj.temperatureResidualScale, ...
+                'pressureResidualScale', obj.pressureResidualScale);
+            w = proc.solver.SolverDiagnostics.buildEquationWeights( ...
+                eqNames, nEq, r0, obj.eqTypes, opts);
         end
 
         function [x, map] = packUnknowns(obj)
-            x = []; map = struct('streamIndex',{},'var',{},'subIndex',{},'unitIndex',{},'bounds',{},'owner',{},'field',{});
-            for si = 1:numel(obj.streams)
-                s = obj.streams{si};
-                if obj.isUnknownScalar(s,'n_dot')
-                    nd = obj.safeInit(s.n_dot,1.0);
-                    x(end+1,1) = log(max(nd,obj.nDotMin));
-                    map(end+1) = struct('streamIndex',si,'var','z','subIndex',[], 'unitIndex',NaN,'bounds',[-Inf Inf],'owner',[],'field','');
-                end
-                if obj.anyYUnknown(s)
-                    [packIdx, a0] = obj.initialCompositionLogits(s);
-
-                    % Gauge-fixing for composition logits:
-                    % Only (nUnknownComponents-1) logits are packed and one
-                    % unknown component is anchored at zero in unpackUnknowns().
-                    % This removes the softmax shift invariance so we do not
-                    % re-introduce redundant composition DOFs.
-                    for j = 1:numel(packIdx)
-                        x(end+1,1) = a0(j);
-                        map(end+1) = struct('streamIndex',si,'var','a','subIndex',packIdx(j), 'unitIndex',NaN,'bounds',[-Inf Inf],'owner',[],'field','');
-                    end
-                end
-                knownT = isprop(s,'known')&&isstruct(s.known)&&isfield(s.known,'T')&&...
-                    islogical(s.known.T)&&isscalar(s.known.T)&&s.known.T;
-                if ~knownT
-                    x(end+1,1) = obj.safeInit(s.T,300);
-                    map(end+1) = struct('streamIndex',si,'var','T','subIndex',[], 'unitIndex',NaN,'bounds',[-Inf Inf],'owner',[],'field','');
-                end
-                knownP = isprop(s,'known')&&isstruct(s.known)&&isfield(s.known,'P')&&...
-                    islogical(s.known.P)&&isscalar(s.known.P)&&s.known.P;
-                if ~knownP
-                    x(end+1,1) = obj.safeInit(s.P,1e5);
-                    map(end+1) = struct('streamIndex',si,'var','P','subIndex',[], 'unitIndex',NaN,'bounds',[-Inf Inf],'owner',[],'field','');
-                end
-            end
-
-            % Optional unit-level manipulated unknowns (e.g., Adjust blocks)
-            for ui = 1:numel(obj.units)
-                u = obj.units{ui};
-                if ~ismethod(u, 'unknownSpecs')
-                    continue;
-                end
-                specs = u.unknownSpecs();
-                if isempty(specs)
-                    continue;
-                end
-                if ~isstruct(specs)
-                    error('unknownSpecs() for %s must return a struct array.', class(u));
-                end
-                for k = 1:numel(specs)
-                    s = specs(k);
-                    x(end+1,1) = obj.safeInit(s.initial, 0); %#ok<AGROW>
-                    map(end+1) = struct( ...
-                        'streamIndex', NaN, ...
-                        'var', 'u', ...
-                        'subIndex', obj.structFieldOr(s, 'index', NaN), ...
-                        'unitIndex', ui, ...
-                        'bounds', [obj.structFieldOr(s, 'lower', -Inf), obj.structFieldOr(s, 'upper', Inf)], ...
-                        'owner', s.owner, ...
-                        'field', s.field); %#ok<GFLD>
-                end
-            end
+            [x, map] = proc.solver.VariablePacker.packUnknowns( ...
+                obj.streams, obj.units, obj.ns, obj.nDotMin);
         end
 
         function buildUnpackMaps(obj)
-            % Pre-compute typed index maps for fast unpackUnknowns.
-            % Called once after packUnknowns.
-            nMap = numel(obj.map);
-            obj.unpackZ = struct('xIdx',{},'sIdx',{});
-            obj.unpackA = struct('xIdx',{},'sIdx',{},'comp',{});
-            obj.unpackT = struct('xIdx',{},'sIdx',{});
-            obj.unpackP = struct('xIdx',{},'sIdx',{});
-            obj.unpackU = struct('xIdx',{},'owner',{},'field',{},'sub',{},'lb',{},'ub',{});
-            for k = 1:nMap
-                m = obj.map(k);
-                switch m.var
-                    case 'z'
-                        obj.unpackZ(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
-                    case 'a'
-                        obj.unpackA(end+1) = struct('xIdx',k,'sIdx',m.streamIndex,'comp',m.subIndex);
-                    case 'T'
-                        obj.unpackT(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
-                    case 'P'
-                        obj.unpackP(end+1) = struct('xIdx',k,'sIdx',m.streamIndex);
-                    case 'u'
-                        obj.unpackU(end+1) = struct('xIdx',k,'owner',m.owner,'field',m.field,...
-                            'sub',m.subIndex,'lb',m.bounds(1),'ub',m.bounds(2));
-                end
-            end
+            obj.unpackMaps = proc.solver.VariablePacker.buildUnpackMaps(obj.map);
         end
 
         function unpackUnknowns(obj, x)
-            nS = numel(obj.streams);
-            z = nan(nS,1);
-            a = nan(nS, obj.ns);
-
-            % Typed index maps: direct indexing without switch per entry
-            for i = 1:numel(obj.unpackZ)
-                m = obj.unpackZ(i);
-                z(m.sIdx) = x(m.xIdx);
-            end
-            for i = 1:numel(obj.unpackA)
-                m = obj.unpackA(i);
-                a(m.sIdx, m.comp) = x(m.xIdx);
-            end
-            for i = 1:numel(obj.unpackT)
-                m = obj.unpackT(i);
-                obj.streams{m.sIdx}.T = x(m.xIdx);
-            end
-            for i = 1:numel(obj.unpackP)
-                m = obj.unpackP(i);
-                obj.streams{m.sIdx}.P = x(m.xIdx);
-            end
-            for i = 1:numel(obj.unpackU)
-                m = obj.unpackU(i);
-                xi = min(max(x(m.xIdx), m.lb), m.ub);
-                if isnan(m.sub)
-                    m.owner.(m.field) = xi;
-                else
-                    arr = m.owner.(m.field);
-                    arr(m.sub) = xi;
-                    m.owner.(m.field) = arr;
-                end
-            end
-
-            for si = 1:nS
-                s = obj.streams{si};
-                if ~isnan(z(si))
-                    s.n_dot = exp(min(max(z(si),obj.zMin),obj.zMax));
-                end
-                if any(isfinite(a(si,:)))
-                    s.y = obj.reconstructComposition(s, a(si,:));
-                end
-                if ~isnan(s.T), s.T = min(max(s.T,obj.TMin),obj.TMax); end
-                if ~isnan(s.P), s.P = min(max(s.P,obj.PMin),obj.PMax); end
-            end
-        end
-
-
-        function v = structFieldOr(~, s, fieldName, defaultValue)
-            v = proc.solver.VariablePacker.structFieldOr(s, fieldName, defaultValue);
-        end
-
-        function tf = isUnknownScalar(~, s, fn)
-            tf = proc.solver.VariablePacker.isUnknownScalar(s, fn);
-        end
-
-        function tf = anyYUnknown(obj, s)
-            tf = proc.solver.VariablePacker.anyYUnknown(s, obj.ns);
-        end
-
-        function knownMask = compositionKnownMask(obj, s)
-            knownMask = proc.solver.VariablePacker.compositionKnownMask(s, obj.ns);
-        end
-
-        function unknownIdx = unknownCompositionIndices(obj, s)
-            unknownIdx = proc.solver.VariablePacker.unknownCompositionIndices(s, obj.ns);
-        end
-
-        function [packIdx, a0] = initialCompositionLogits(obj, s)
-            [packIdx, a0] = proc.solver.VariablePacker.initialCompositionLogits(s, obj.ns);
-        end
-
-        function y = reconstructComposition(obj, s, packedA)
-            y = proc.solver.VariablePacker.reconstructComposition(s, packedA, obj.ns);
-        end
-
-        function v = safeInit(~, c, fb)
-            v = proc.solver.VariablePacker.safeInit(c, fb);
-        end
-
-        function y = softmax(~, aPacked)
-            y = proc.solver.VariablePacker.softmax(aPacked);
-        end
-
-        function y = normalizeSimplex(~, y)
-            y = proc.solver.VariablePacker.normalizeSimplex(y);
-        end
-
-        function warnIfCompositionNotNormalized(obj, s, y)
-            proc.solver.SolverDiagnostics.warnIfCompositionNotNormalized(s, y, obj.debugLevel, obj.debugOut);
+            bounds = struct('zMin',obj.zMin,'zMax',obj.zMax, ...
+                'TMin',obj.TMin,'TMax',obj.TMax,'PMin',obj.PMin,'PMax',obj.PMax);
+            proc.solver.VariablePacker.unpackUnknowns( ...
+                x, obj.streams, obj.ns, obj.unpackMaps, bounds);
         end
 
         function debugPrintMixerCompositionConsistency(obj, r, dbg, context)
-            proc.solver.SolverDiagnostics.debugPrintMixerCompositionConsistency(r, dbg, obj.units, context);
+            proc.solver.SolverDiagnostics.debugPrintMixerCompositionConsistency( ...
+                r, dbg, obj.units, context);
         end
 
         function issues = detectKnownSpecConflicts(obj)
-            issues = proc.solver.SolverDiagnostics.detectKnownSpecConflicts(obj.streams, obj.units);
-        end
-
-        function tf = isKnownFlagTrue(~, s, field)
-            tf = proc.solver.SolverDiagnostics.isKnownFlagTrue(s, field);
+            issues = proc.solver.SolverDiagnostics.detectKnownSpecConflicts( ...
+                obj.streams, obj.units);
         end
 
         function checkInitialJacobianConnectivity(obj, x, r0)
@@ -1117,26 +775,9 @@ classdef ProcessSolver < handle
                 @(msg, varargin) obj.log(msg, varargin{:}));
         end
 
-        function tf = isNearZeroFlowStream(obj, streamIndex)
-            tf = proc.solver.SolverDiagnostics.isNearZeroFlowStream(streamIndex, obj.streams, obj.nDotMin);
-        end
-
-        function txt = describeUnknown(~, m)
-            txt = proc.solver.SolverDiagnostics.describeUnknown(m);
-        end
-
         function detail = buildFailureReport(obj, ME, stage, iter, r, w, eqNames)
             detail = proc.solver.SolverDiagnostics.buildFailureReport( ...
                 ME, stage, iter, r, w, eqNames, obj.logLines, obj.residualEvalCount);
-        end
-
-        function txt = summarizeTopResiduals(~, r, eqNames, topN)
-            if nargin < 4, topN = 10; end
-            txt = proc.solver.SolverDiagnostics.summarizeTopResiduals(r, eqNames, topN);
-        end
-
-        function [dominantMixer, eqIdx, eqVal] = findDominantMixer(obj, r)
-            [dominantMixer, eqIdx, eqVal] = proc.solver.SolverDiagnostics.findDominantMixer(r, obj.units);
         end
     end
 end

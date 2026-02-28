@@ -4,58 +4,57 @@ classdef SolverDiagnostics
 
     methods (Static)
 
-        function eqNames = buildEquationLabels(streams, units, ns)
+        function [eqNames, types] = buildEquationLabels(units, eqCounts)
             %BUILDEQUATIONLABELS  Build equation labels with type classification.
-            %   Returns eqNames (string column) and types (double column: 0=default,1=flow,2=temp,3=pressure).
+            %   Returns eqNames (string column) and types (double column:
+            %   0=default, 1=flow, 2=temperature, 3=pressure).
+            %   eqCounts is an optional cached vector of per-unit equation counts.
             eqNames = strings(0,1);
+            types = zeros(0,1);
             for u = 1:numel(units)
                 unit = units{u};
-                nEq = numel(unit.equations());
-                cn = class(unit);
+                if nargin >= 2 && ~isempty(eqCounts) && u <= numel(eqCounts)
+                    nEq = eqCounts(u);
+                else
+                    nEq = numel(unit.equations());
+                end
+
                 labels = strings(nEq,1);
-                for e = 1:nEq
-                    labels(e) = sprintf('%s[%d].eq%d', cn, u, e);
-                end
-
-                % Try to classify equations by type
                 if ismethod(unit, 'equationLabels')
                     try
-                        userLabels = unit.equationLabels();
-                        if numel(userLabels) == nEq
-                            labels = string(userLabels(:));
-                        end
+                        labels = string(unit.equationLabels());
                     catch
+                        labels = strings(nEq,1);
+                    end
+                end
+                if numel(labels) ~= nEq
+                    labels = strings(nEq,1);
+                end
+
+                unitName = class(unit);
+                if ismethod(unit, 'describe')
+                    try
+                        unitName = string(unit.describe());
+                    catch
+                        unitName = string(class(unit));
                     end
                 end
 
+                localTypes = zeros(nEq, 1);
+                for i = 1:nEq
+                    if strlength(labels(i)) == 0
+                        labels(i) = sprintf('%s: eq %d', char(unitName), i);
+                    end
+                    lbl = lower(char(labels(i)));
+                    if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
+                        localTypes(i) = 3;
+                    elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
+                        localTypes(i) = 2;
+                    elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
+                        localTypes(i) = 1;
+                    end
+                end
                 eqNames = [eqNames; labels(:)]; %#ok<AGROW>
-            end
-        end
-
-        function types = classifyEquationTypes(units)
-            %CLASSIFYEQUATIONTYPES  Build per-equation type classification vector.
-            types = [];
-            for u = 1:numel(units)
-                unit = units{u};
-                nEq = numel(unit.equations());
-                localTypes = zeros(nEq,1);
-
-                if ismethod(unit, 'equationLabels')
-                    try
-                        userLabels = string(unit.equationLabels());
-                        for e = 1:min(nEq, numel(userLabels))
-                            lbl = lower(char(userLabels(e)));
-                            if contains(lbl, 'pressure') || contains(lbl, ' p') || contains(lbl, 'dp')
-                                localTypes(e) = 3;
-                            elseif contains(lbl, 'temp') || contains(lbl, 'enthalpy') || contains(lbl, 'energy')
-                                localTypes(e) = 2;
-                            elseif contains(lbl, 'flow') || contains(lbl, 'mass') || contains(lbl, 'mole') || contains(lbl, 'n_dot')
-                                localTypes(e) = 1;
-                            end
-                        end
-                    catch
-                    end
-                end
                 types = [types; localTypes(:)]; %#ok<AGROW>
             end
         end
@@ -111,25 +110,41 @@ classdef SolverDiagnostics
         function dbg = resolveDebugOptions(solverObj)
             %RESOLVEDEBUGOPTIONS  Convert solver debug fields to a struct.
             dbg = struct( ...
-                'on', solverObj.debug, ...
-                'level', solverObj.debugLevel, ...
-                'topN', solverObj.debugTopN, ...
-                'every', solverObj.debugEvery, ...
+                'level', max(0, floor(solverObj.debugLevel)), ...
+                'topN', max(1, floor(solverObj.debugTopN)), ...
+                'every', max(0, floor(solverObj.debugEvery)), ...
                 'out', solverObj.debugOut, ...
-                'eqNames', solverObj.debugEqNames);
+                'eqNames', logical(solverObj.debugEqNames));
+
+            if solverObj.debug && dbg.level < 1
+                dbg.level = 1;
+            end
+
+            if isstruct(solverObj.solverSettings) && isfield(solverObj.solverSettings, 'debugStruct')
+                ds = solverObj.solverSettings.debugStruct;
+                if isstruct(ds)
+                    if isfield(ds, 'level'),   dbg.level = max(dbg.level, floor(ds.level)); end
+                    if isfield(ds, 'topN'),    dbg.topN = max(1, floor(ds.topN)); end
+                    if isfield(ds, 'every'),   dbg.every = max(0, floor(ds.every)); end
+                    if isfield(ds, 'out'),     dbg.out = ds.out; end
+                    if isfield(ds, 'eqNames'), dbg.eqNames = logical(ds.eqNames); end
+                end
+            end
+
+            envLevel = str2double(getenv('MATHLAB_DEBUG'));
+            if isfinite(envLevel) && envLevel > 0
+                dbg.level = max(dbg.level, floor(envLevel));
+            end
         end
 
         function nDisabled = configureNormalizationConstraints(units, removeFlag)
-            %CONFIGURENORMALIZATIONCONSTRAINTS  Disable redundant normalization.
+            %CONFIGURENORMALIZATIONCONSTRAINTS  Toggle normalization constraints.
             nDisabled = 0;
-            if ~removeFlag
-                return
-            end
             for u = 1:numel(units)
                 unit = units{u};
-                if isprop(unit, 'normalizationConstraintEnabled')
-                    if unit.normalizationConstraintEnabled
-                        unit.normalizationConstraintEnabled = false;
+                if isprop(unit, 'includeNormalizationConstraints')
+                    unit.includeNormalizationConstraints = ~removeFlag;
+                    if removeFlag
                         nDisabled = nDisabled + 1;
                     end
                 end
@@ -137,33 +152,39 @@ classdef SolverDiagnostics
         end
 
         function debugPrintIter(dbg, iter, rn2, r, dx, alpha, bt)
-            if ~dbg.on || dbg.level < 1
-                return
+            rnInf = norm(r, inf);
+            dxn = norm(dx, 2);
+            [maxVal, maxIdx] = max(abs(r));
+            if isempty(maxIdx), maxIdx = 0; maxVal = NaN; maxSigned = NaN;
+            else, maxSigned = r(maxIdx);
             end
-            fprintf(dbg.out, 'iter %3d  ||r||=%.4e  ||dx||=%.4e  alpha=%.4f  bt=%d\n', ...
-                iter, rn2, norm(dx), alpha, bt);
+
+            fprintf(dbg.out, 'Iter %3d: ||r||2=%.3e  ||r||inf=%.3e  ||dx||=%.3e  alpha=%.3e  bt=%d  maxEq=%d (|r|=%.3e, r=%+.3e)\n', ...
+                iter, rn2, rnInf, dxn, alpha, bt, maxIdx, maxVal, maxSigned);
         end
 
         function debugPrintTopResiduals(dbg, r, eqNames, context)
-            if ~dbg.on || dbg.level < 2
+            if isempty(r)
                 return
             end
-            n = min(dbg.topN, numel(r));
-            [~, idx] = sort(abs(r), 'descend');
-            idx = idx(1:n);
-            fprintf(dbg.out, '--- Top %d residuals (%s) ---\n', n, context);
+
+            n = min(numel(r), dbg.topN);
+            [~, order] = sort(abs(r), 'descend');
+            topIdx = order(1:n);
+
+            fprintf(dbg.out, 'Top %d residual components (%s):\n', n, context);
             for i = 1:n
-                k = idx(i);
-                if dbg.eqNames && k <= numel(eqNames)
-                    fprintf(dbg.out, '  [%4d] %-40s = %+.3e\n', k, char(eqNames(k)), r(k));
-                else
-                    fprintf(dbg.out, '  [%4d] %+.3e\n', k, r(k));
+                idx = topIdx(i);
+                label = sprintf('eq %4d', idx);
+                if dbg.eqNames && idx <= numel(eqNames) && strlength(eqNames(idx)) > 0
+                    label = char(eqNames(idx));
                 end
+                fprintf(dbg.out, '  [%3d] %-40s : %+.3e\n', idx, label, r(idx));
             end
         end
 
         function debugPrintMixerCompositionConsistency(r, dbg, units, context)
-            if ~dbg.on || dbg.level < 3
+            if dbg.level < 3
                 return
             end
             [mixer, dominantEq, dominantVal] = proc.solver.SolverDiagnostics.findDominantMixer(r, units);

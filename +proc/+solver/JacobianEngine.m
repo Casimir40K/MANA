@@ -182,19 +182,32 @@ classdef JacobianEngine
             end
         end
 
-        function [J, accepted] = tryBroydenUpdate(J, s, y, minStepNorm2, minRcond)
+        function [J, accepted] = tryBroydenUpdate(J, s, y, minStepNorm2, ~)
             accepted = false;
-            if isempty(J) || norm(s)^2 < minStepNorm2
+            s2 = s.' * s;
+            if ~(isfinite(s2) && s2 > minStepNorm2)
                 return
             end
-            Jnew = J + ((y - J*s) * s.') / (s.' * s);
-            if any(~isfinite(Jnew(:)))
+
+            Js = J * s;
+            u = (y - Js) / s2;
+            Jcand = J + u * s.';
+
+            if any(~isfinite(Jcand(:)))
                 return
             end
-            if rcond(Jnew) < minRcond
+
+            % Cheap quality check: verify the updated Jacobian can produce
+            % a finite linear solve. Avoids the O(n^3) rcond computation.
+            n = size(Jcand, 2);
+            JTJ = Jcand.' * Jcand;
+            lambda = 1e-12 * max(1, trace(JTJ) / max(1, n));
+            dxTest = (JTJ + lambda * eye(n)) \ (Jcand.' * y);
+            if ~all(isfinite(dxTest))
                 return
             end
-            J = Jnew;
+
+            J = Jcand;
             accepted = true;
         end
     end
