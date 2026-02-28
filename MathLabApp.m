@@ -604,7 +604,7 @@ classdef MathLabApp < handle
 
             addRow = uigridlayout(leftG, [1 2], ...
                 'ColumnWidth',{140,'1x'}, 'Padding',[0 0 0 0]);
-            catalog = app.unitTypeCatalog();
+            catalog = ui.AppUtils.unitTypeCatalog();
             app.AddUnitDropDown = uidropdown(addRow, ...
                 'Items', {catalog.label}, ...
                 'ItemsData', {catalog.type}, ...
@@ -1258,14 +1258,14 @@ classdef MathLabApp < handle
         end
 
         function fs = buildFlowsheet(app)
-            [resolvedDefs, aliasByOutlet] = app.resolveIdentityLinks(app.unitDefs);
+            [resolvedDefs, aliasByOutlet] = proc.UnitFactory.resolveIdentityLinks(app.unitDefs);
             fs = proc.Flowsheet(app.speciesNames);
             for i = 1:numel(app.streams)
                 fs.addStream(app.streams{i});
             end
-            app.addStreamAliasesToFlowsheet(fs, aliasByOutlet);
+            proc.UnitFactory.addStreamAliasesToFlowsheet(fs, app.streams, aliasByOutlet);
             for i = 1:numel(resolvedDefs)
-                u = app.buildUnitFromDef(resolvedDefs{i}, 'includeIdentityLink', false);
+                u = proc.UnitFactory.buildUnitFromDef(resolvedDefs{i}, app.streams, app.units, app.speciesNames, 'includeIdentityLink', false);
                 if ~isempty(u)
                     fs.addUnit(u);
                 end
@@ -1300,7 +1300,7 @@ classdef MathLabApp < handle
 
         function addUnitFromUI(app)
             typ = app.AddUnitDropDown.Value;
-            sNames = app.getStreamNames();
+            sNames = ui.AppUtils.getStreamNames(app.streams);
             needsOne = ismember(typ, {'Source','Sink','DesignSpec','Constraint'});
             if needsOne
                 if numel(sNames) < 1
@@ -1343,7 +1343,7 @@ classdef MathLabApp < handle
             if isempty(src) || ~isvalid(src)
                 return;
             end
-            catalog = app.unitTypeCatalog();
+            catalog = ui.AppUtils.unitTypeCatalog();
             idx = find(strcmp({catalog.type}, char(string(src.Value))), 1);
             if isempty(idx)
                 src.Tooltip = '';
@@ -1355,7 +1355,7 @@ classdef MathLabApp < handle
         function configureSelectedUnit(app)
             idx = app.getSelectedUnitIdx();
             if isempty(idx), return; end
-            sNames = app.getStreamNames();
+            sNames = ui.AppUtils.getStreamNames(app.streams);
             cn = class(app.units{idx});
             if contains(cn,'Link'),      app.dialogLink(sNames,idx);
             elseif contains(cn,'Mixer'), app.dialogMixer(sNames,idx);
@@ -1871,7 +1871,7 @@ classdef MathLabApp < handle
             logLines = [{'SOLVE FAILED:'; ME.message; ''}; ...
                 arrayfun(@(f) sprintf('  %s (line %d)',f.name,f.line), ME.stack,'Uni',false)];
             app.updateSolveLogFromSolver(string(logLines));
-            app.writeErrorLog('solve_error', logLines);
+            ui.AppUtils.writeErrorLog(app.projectTitle, 'solve_error', logLines);
             if strcmp(ME.identifier, 'Flowsheet:NonConvergedSolve')
                 app.setStatus('Non-converged iterate; balances not satisfied.');
             else
@@ -2432,7 +2432,7 @@ classdef MathLabApp < handle
             status = repmat(string(app.resultsSummary.status), n, 1);
             T = table(iter, residual, status, 'VariableNames', {'iteration','residual','solve_status'});
             outDir = app.resolveInitialExportPath();
-            filepath = fullfile(outDir, app.autoFileName('results_snapshots', 'csv'));
+            filepath = fullfile(outDir, ui.AppUtils.autoFileName(app.projectTitle, 'results_snapshots', 'csv'));
             writetable(T, filepath);
             app.setStatus(sprintf('Snapshot history exported to %s', filepath));
             app.appendResultsExportLog(sprintf('Snapshot history exported: %s', filepath));
@@ -2468,7 +2468,7 @@ classdef MathLabApp < handle
             end
             T = vertcat(traces{:});
             outDir = app.resolveInitialExportPath();
-            filepath = fullfile(outDir, app.autoFileName('results_traces', 'csv'));
+            filepath = fullfile(outDir, ui.AppUtils.autoFileName(app.projectTitle, 'results_traces', 'csv'));
             writetable(T, filepath);
             app.setStatus(sprintf('Results traces exported to %s', filepath));
             app.appendResultsExportLog(sprintf('Results traces exported: %s', filepath));
@@ -2477,7 +2477,7 @@ classdef MathLabApp < handle
         function exportResultsStreamCsv(app)
             T = app.buildDisplayStreamTable();
             outDir = app.resolveInitialExportPath();
-            filepath = fullfile(outDir, app.autoFileName('stream_table', 'csv'));
+            filepath = fullfile(outDir, ui.AppUtils.autoFileName(app.projectTitle, 'stream_table', 'csv'));
             writetable(T, filepath);
             app.setStatus(sprintf('Stream table exported to %s', filepath));
             app.appendResultsExportLog(sprintf('Stream table exported: %s', filepath));
@@ -2770,14 +2770,6 @@ classdef MathLabApp < handle
             txt = ui.UnitConverter.unitLabel(quantity, base, app.unitPrefs);
         end
 
-        function T = convertDisplayStreamTable(app, T)
-            T = ui.UnitConverter.convertDisplayStreamTable(T, app.unitPrefs);
-        end
-
-        function names = displayColumnNames(app, names)
-            names = ui.UnitConverter.displayColumnNames(names, app.unitPrefs);
-        end
-
         function onUnitPrefsChanged(app, key, value)
             app.unitPrefs.(key) = char(string(value));
             app.refreshStreamTables();
@@ -2785,10 +2777,6 @@ classdef MathLabApp < handle
             app.refreshUnitTablePopup();
             app.refreshStreamTablePopup();
             app.refreshResultsTablesTab();
-        end
-
-        function prefs = mergeUnitPrefs(~, inPrefs)
-            prefs = ui.UnitConverter.mergeUnitPrefs(inPrefs);
         end
 
         function applyUnitPrefsToControls(app)
@@ -2842,7 +2830,7 @@ classdef MathLabApp < handle
         function pathOut = resolveInitialExportPath(app)
             pathOut = strtrim(char(string(app.lastExportPath)));
             if isempty(pathOut) || ~isfolder(pathOut)
-                pathOut = app.ensureOutputDir('results');
+                pathOut = ui.AppUtils.ensureOutputDir('results');
                 app.lastExportPath = pathOut;
             end
         end
@@ -2945,8 +2933,8 @@ classdef MathLabApp < handle
             filepath = '';
             try
                 app.syncStreamsFromTable();
-                outDir = app.ensureOutputDir('saves');
-                fname = app.autoFileName('config', 'mat');
+                outDir = ui.AppUtils.ensureOutputDir('saves');
+                fname = ui.AppUtils.autoFileName(app.projectTitle, 'config', 'mat');
                 filepath = fullfile(outDir, fname);
                 app.saveConfig(filepath);
                 app.setStatus(sprintf('Config save succeeded: %s', filepath));
@@ -2966,7 +2954,7 @@ classdef MathLabApp < handle
                 return;
             end
             outDir = app.resolveInitialExportPath();
-            fname = app.autoFileName('results', 'mat');
+            fname = ui.AppUtils.autoFileName(app.projectTitle, 'results', 'mat');
             filepath = fullfile(outDir, fname);
             app.lastExportPath = outDir;
             solverData = app.lastSolver; %#ok
@@ -3037,7 +3025,7 @@ classdef MathLabApp < handle
             if isfield(cfg, 'unitDefs') && ~isempty(cfg.unitDefs)
                 for i = 1:numel(cfg.unitDefs)
                     def = cfg.unitDefs{i};
-                    u = app.buildUnitFromDef(def);
+                    u = proc.UnitFactory.buildUnitFromDef(def, app.streams, app.units, app.speciesNames);
                     if ~isempty(u)
                         app.units{end+1} = u;
                         app.unitDefs{end+1} = def;
@@ -3069,7 +3057,7 @@ classdef MathLabApp < handle
             end
 
             if isfield(cfg,'unitPrefs') && isstruct(cfg.unitPrefs)
-                app.unitPrefs = app.mergeUnitPrefs(cfg.unitPrefs);
+                app.unitPrefs = ui.UnitConverter.mergeUnitPrefs(cfg.unitPrefs);
             end
             if isfield(cfg,'lastExportPath')
                 app.lastExportPath = char(string(cfg.lastExportPath));
@@ -3102,14 +3090,6 @@ classdef MathLabApp < handle
             end
         end
 
-        function u = buildUnitFromDef(app, def, varargin)
-            u = proc.UnitFactory.buildUnitFromDef(def, app.streams, app.units, app.speciesNames, varargin{:});
-        end
-
-        function generateScript(~, filepath, cfg)
-            ui.ConfigManager.generateScript(filepath, cfg);
-        end
-
     end
 
     % =====================================================================
@@ -3119,7 +3099,7 @@ classdef MathLabApp < handle
 
         function updateSensDropdowns(app)
             % --- Output stream / field dropdowns ---
-            sNames = app.getStreamNames();
+            sNames = ui.AppUtils.getStreamNames(app.streams);
             if isempty(sNames), sNames = {'(none)'}; end
             app.SensOutputStreamDD.Items = sNames;
 
@@ -3305,24 +3285,8 @@ classdef MathLabApp < handle
     %  HELPERS
     % =====================================================================
     methods (Access = private)
-        function [resolvedDefs, aliasByOutlet] = resolveIdentityLinks(~, unitDefs)
-            [resolvedDefs, aliasByOutlet] = proc.UnitFactory.resolveIdentityLinks(unitDefs);
-        end
-
-        function addStreamAliasesToFlowsheet(app, fs, aliasByOutlet)
-            proc.UnitFactory.addStreamAliasesToFlowsheet(fs, app.streams, aliasByOutlet);
-        end
-
-        function tf = isIdentityLinkDef(~, def)
-            tf = proc.UnitFactory.isIdentityLinkDef(def);
-        end
-
         function mix = buildThermoMixForGUI(app)
             mix = ui.AppUtils.buildThermoMix(app.speciesNames);
-        end
-
-        function names = getStreamNames(app)
-            names = ui.AppUtils.getStreamNames(app.streams);
         end
 
         function s = findStream(app, name)
@@ -3333,14 +3297,6 @@ classdef MathLabApp < handle
             nm = ui.AppUtils.shortTypeName(u);
         end
 
-        function label = prettyUnitTypeName(~, type)
-            label = ui.AppUtils.prettyUnitTypeName(type);
-        end
-
-        function catalog = unitTypeCatalog(~)
-            catalog = ui.AppUtils.unitTypeCatalog();
-        end
-
         function cfg = buildValidatedConfigPayload(app)
             cfg = ui.ConfigManager.buildConfigPayload( ...
                 app.speciesNames, app.speciesMW, app.streams, app.unitDefs, ...
@@ -3348,33 +3304,8 @@ classdef MathLabApp < handle
                 app.projectTitle, app.unitPrefs, app.lastExportPath, app.logEveryN);
         end
 
-        function validateConfigPayload(~, cfg)
-            ui.ConfigManager.validateConfigPayload(cfg);
-        end
-
-        function ensureWritableDir(~, dirPath)
-            ui.AppUtils.ensureWritableDir(dirPath);
-        end
-
         function setStatus(app, msg)
             app.StatusBar.Text = ['  ' msg];
-        end
-    end
-
-    % =====================================================================
-    %  OUTPUT FOLDER MANAGEMENT
-    % =====================================================================
-    methods (Access = private)
-        function dirPath = ensureOutputDir(~, subfolder)
-            dirPath = ui.AppUtils.ensureOutputDir(subfolder);
-        end
-
-        function fname = autoFileName(app, prefix, ext)
-            fname = ui.AppUtils.autoFileName(app.projectTitle, prefix, ext);
-        end
-
-        function writeErrorLog(app, prefix, logLines)
-            ui.AppUtils.writeErrorLog(app.projectTitle, prefix, logLines);
         end
     end
 end
