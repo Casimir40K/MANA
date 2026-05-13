@@ -1,6 +1,6 @@
 # MANA - MAna is Not Aspen
 
-A transparent, educational process simulator built in MATLAB. Simpler than Aspen/HYSYS by design — explicit physics, readable code, no black boxes.
+A class 4 mass and energy balance tool for simulating chemical processes and running sensitivites.
 
 ## Quick Start
 
