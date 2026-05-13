@@ -1,6 +1,19 @@
-# MANA - MAna is Not Aspen
+# MANA — Mass and Energy Balance Simulator
 
-A class 4 mass and energy balance tool for simulating chemical processes and running sensitivites.
+MANA is a class 4 MATLAB process simulator for steady-state chemical flowsheets.
+It handles multi-unit flowsheet construction, iterative solving, sensitivity
+analysis, and local stability diagnostics through a GUI or command line.
+
+Built as a lightweight alternative to Aspen/HYSYS for research use during
+MSc Chemical Engineering at Brunel University.
+
+**Capabilities**
+- 15+ unit operation types
+- Levenberg-Marquardt solver with convergence diagnostics
+- Local stability analysis via Jacobian pole proxy
+- Sensitivity sweeps across unit and stream parameters
+- Custom unit operations via a simple class interface
+- Regression test suite
 
 ## Quick Start
 
