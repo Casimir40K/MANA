@@ -1,4 +1,4 @@
-# MathLab — MATLAB Steady-State Process Solver
+# MANA - MAna is Not Aspen
 
 A transparent, educational process simulator built in MATLAB. Simpler than Aspen/HYSYS by design — explicit physics, readable code, no black boxes.
 
